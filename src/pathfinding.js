@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { isWalkable } from './collision.js';
 
 // Taille du monde (doit être la même que dans collision.js)
-const WORLD_SIZE = 50;
+const WORLD_SIZE = 100;
 // Nombre de cellules par côté (grille WORLD_SIZE×WORLD_SIZE subdivisée)
-const GRID_DIVS  = 50;
+const GRID_DIVS  = 100;
 const CELL_SIZE  = WORLD_SIZE / GRID_DIVS;
 
 // Directions 8-voisines avec contrôle de diagonale

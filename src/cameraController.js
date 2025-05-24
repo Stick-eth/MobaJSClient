@@ -18,14 +18,14 @@ const lastMouse  = new THREE.Vector2(-Infinity, -Infinity);
 
 // Zoom
 let zoomDistance = cameraOffset.length();
-const MIN_ZOOM    = 4;
-const MAX_ZOOM    = 15;
+const MIN_ZOOM    = 6;
+const MAX_ZOOM    = 42; //MAX 12 NORMALLY
 
 // Réglages
 const SPEED_FACTOR = 0.08;
 const ZOOM_SPEED   = 0.01;
 const EDGE_SPEED   = 25;
-const EDGE_MARGIN  = 50;
+const EDGE_MARGIN  = 50; 
 
 export function initCameraControl(domElement) {
   const canvas = domElement;
@@ -87,6 +87,7 @@ export function initCameraControl(domElement) {
       MIN_ZOOM,
       MAX_ZOOM
     );
+    console.log('Current zoom level:', zoomDistance);
     const dir = camera.position.clone()
       .sub(character.position)
       .normalize();

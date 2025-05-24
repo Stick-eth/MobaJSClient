@@ -22,7 +22,7 @@ export function showMarker(position) {
 
   markerGroup = new THREE.Group();
   // Surélève l'overlay du sol
-  const ELEVATION = 0.1;
+  const ELEVATION = 0.02;
   markerGroup.position.set(position.x, position.y + ELEVATION, position.z);
 
   // 1) L’anneau

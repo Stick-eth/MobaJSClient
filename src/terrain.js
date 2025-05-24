@@ -27,7 +27,7 @@ export function initTerrain() {
   splatMap.wrapS = splatMap.wrapT = THREE.RepeatWrapping;
   heightMap.wrapS = heightMap.wrapT = THREE.RepeatWrapping;
 
-  const size     = 50;
+  const size     = 100;
   const segments = 256;
   const geo = new THREE.PlaneGeometry(size, size, segments, segments);
   geo.rotateX(-Math.PI / 2);

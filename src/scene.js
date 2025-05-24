@@ -5,19 +5,27 @@ import { initTerrain } from './terrain.js';
 export const scene = new THREE.Scene();
 
 export const camera = new THREE.PerspectiveCamera(
-  75,
+  40,
   window.innerWidth / window.innerHeight,
   0.1,
   1000
 );
+
+// Angle 56° sous l’horizontale
+const CAMERA_DISTANCE = 12; // à ajuster selon rendu désiré
+const CAMERA_ANGLE_DEG = 56;
+const theta = THREE.MathUtils.degToRad(CAMERA_ANGLE_DEG);
 
 export const renderer = new THREE.WebGLRenderer({
   antialias: true,
   canvas: document.getElementById('scene-canvas'),
 });
 
-// Offset initial de la caméra par rapport au personnage (ou à l'origine)
-export const cameraOffset = new THREE.Vector3(0, 10, 10);
+export const cameraOffset = new THREE.Vector3(
+  0,
+  Math.sin(theta) * CAMERA_DISTANCE,
+  Math.cos(theta) * CAMERA_DISTANCE
+);
 
 export function initScene() {
   // Configure le renderer

@@ -22,7 +22,7 @@ img.onload = () => {
  * Teste si la position (x,z) en monde est walkable.
  * - worldSize doit correspondre à la taille du terrain (ici 50).
  */
-const worldSize = 50;
+const worldSize = 100;
 export function isWalkable(x, z) {
   if (!imgData) return false; // pas encore prêt
   // convertir coordonnées monde [-size/2, +size/2] en UV [0..w-1],[0..h-1]
