@@ -9,7 +9,7 @@ export const character = new THREE.Mesh(
 character.position.set(0, 0.5, 0);
 
 let targetPos = null;
-const speed = 5; // unités/seconde
+const speed = 8; // unités/seconde
 
 export function initCharacter(scene) {
   scene.add(character);

@@ -7,110 +7,129 @@ let locked      = true;
 let isPanning   = false;
 let spaceHeld   = false;
 
-// Pour gérer le “drag virtuel” du pointeur
-const panDelta    = new THREE.Vector2();
-// Pour mémoriser l’orientation de la caméra en unlocked
-const storedQuat  = new THREE.Quaternion();
+// Origine du “drag virtuel”
+const panStart   = new THREE.Vector2();
+const panDelta   = new THREE.Vector2();
 
-// Zoom : on part de la distance initiale caméra ↔ personnage
-let zoomDistance  = cameraOffset.length();
-const MIN_ZOOM     = 4;    // distance minimale
-const MAX_ZOOM     = 15;   // distance maximale
+// Quaternion à conserver en unlocked
+const storedQuat = new THREE.Quaternion();
+// Position lastMouse pour edge-scroll
+const lastMouse  = new THREE.Vector2(-Infinity, -Infinity);
+
+// Zoom
+let zoomDistance = cameraOffset.length();
+const MIN_ZOOM    = 4;
+const MAX_ZOOM    = 15;
 
 // Réglages
-const SPEED_FACTOR = 0.08; // pour le pan
-const ZOOM_SPEED   = 0.01;  // pour la molette
+const SPEED_FACTOR = 0.08;
+const ZOOM_SPEED   = 0.01;
+const EDGE_SPEED   = 25;
+const EDGE_MARGIN  = 50;
 
 export function initCameraControl(domElement) {
   const canvas = domElement;
 
-  // — Bascule lock/unlock avec Y
+  // — Y pour lock/unlock
   window.addEventListener('keydown', e => {
     if (e.key.toLowerCase() === 'y') {
       locked = !locked;
-      // si on repasse en locked, déverrouille le pointeur
-      if (locked && document.pointerLockElement === canvas) {
-        document.exitPointerLock();
-      }
+      // **Stocke l’orientation actuelle au passage en unlock**
+      if (!locked) storedQuat.copy(camera.quaternion);
     }
-
-    // — Space maintien : comportement “lock”
-    if (e.code === 'Space') {
-      spaceHeld = true;
-    }
+    if (e.code === 'Space') spaceHeld = true;
   });
- 
   window.addEventListener('keyup', e => {
-    if (e.code === 'Space') {
-      spaceHeld = false;
-    }
+    if (e.code === 'Space') spaceHeld = false;
   });
 
-  // — Clic-molette : démarre le pan (unlock only)
+  // — Clic-molette : début du pan si unlock
   canvas.addEventListener('mousedown', e => {
     if (!locked && e.button === 1) {
-      isPanning = true;
-      panDelta.set(0, 0);
-      storedQuat.copy(camera.quaternion);
-      canvas.requestPointerLock();
       e.preventDefault();
+      isPanning = true;
+      panStart.set(e.clientX, e.clientY);
+      panDelta.set(0, 0);
+      // on actualise storedQuat en cas de pan juste après unlock
+      storedQuat.copy(camera.quaternion);
     }
   });
 
-  // — Accumulation movementX/Y pour le pan
-  document.addEventListener('mousemove', e => {
-    if (!locked && isPanning && document.pointerLockElement === canvas) {
-      panDelta.x += e.movementX;
-      panDelta.y += e.movementY;
+  // — Suivi souris
+  window.addEventListener('mousemove', e => {
+    lastMouse.set(e.clientX, e.clientY);
+    if (!locked && isPanning) {
+      panDelta.set(
+        e.clientX - panStart.x,
+        e.clientY - panStart.y
+      );
     }
   });
 
   // — Fin du pan
-  document.addEventListener('mouseup', e => {
+  window.addEventListener('mouseup', e => {
     if (!locked && e.button === 1) {
       isPanning = false;
-      if (document.pointerLockElement === canvas) {
-        document.exitPointerLock();
-      }
+      panDelta.set(0, 0);
     }
   });
 
-  // — Zoom/dézoom au scroll de molette (toujours possible)
+  // — Zoom toujours possible
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    // calcule la nouvelle distance
-    const delta = e.deltaY * ZOOM_SPEED;
-    zoomDistance = THREE.MathUtils.clamp(zoomDistance + delta, MIN_ZOOM, MAX_ZOOM);
-
-    // repositionne immédiatement la caméra autour du personnage
-    const direction = camera.position
-      .clone()
+    zoomDistance = THREE.MathUtils.clamp(
+      zoomDistance + e.deltaY * ZOOM_SPEED,
+      MIN_ZOOM,
+      MAX_ZOOM
+    );
+    const dir = camera.position.clone()
       .sub(character.position)
       .normalize();
-    camera.position
-      .copy(character.position)
-      .addScaledVector(direction, zoomDistance);
+    camera.position.copy(character.position)
+      .addScaledVector(dir, zoomDistance);
   }, { passive: false });
 }
 
 export function updateCamera(delta) {
-  // — Mode locked ou Space maintenu : suivi rigide
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const x = lastMouse.x;
+  const y = lastMouse.y;
+
+  // --- Locked ou Space : suivi strict, on oriente vers le perso ---
   if (locked || spaceHeld) {
     const offsetNorm = cameraOffset.clone().normalize();
-    camera.position
-      .copy(character.position)
+    camera.position.copy(character.position)
       .addScaledVector(offsetNorm, zoomDistance);
     camera.lookAt(character.position);
 
-  // — Mode unlocked + en pan : déplacement infini
+  // --- Pan infini si molette enfoncée ---
   } else if (isPanning) {
-    const dx = panDelta.x;
-    const dy = panDelta.y;
-    const dir = new THREE.Vector3(dx, 0, dy).normalize();
-    const speed = panDelta.length() * SPEED_FACTOR;
-    camera.position.addScaledVector(dir, speed * delta);
-
-    // maintien de l’orientation
+    const dx   = panDelta.x;
+    const dy   = panDelta.y;
+    const dist = panDelta.length();
+    if (dist > 0) {
+      const dir   = new THREE.Vector3(dx, 0, dy).normalize();
+      const speed = dist * SPEED_FACTOR;
+      camera.position.addScaledVector(dir, speed * delta);
+    }
+    // preserve l’angle stocké
     camera.quaternion.copy(storedQuat);
+
+  // --- Edge-scroll si curseur dans la zone de bordure ---
+  } else {
+    let ex = 0, ez = 0;
+    if (x <= EDGE_MARGIN)         ex = -1;
+    else if (x >= w - EDGE_MARGIN) ex = 1;
+    // inversion haut/bas si besoin
+    if (y <= EDGE_MARGIN)         ez = -1;
+    else if (y >= h - EDGE_MARGIN) ez = 1;
+
+    if (ex !== 0 || ez !== 0) {
+      const dir = new THREE.Vector3(ex, 0, ez).normalize();
+      camera.position.addScaledVector(dir, EDGE_SPEED * delta);
+      // preserve l’angle stocké
+      camera.quaternion.copy(storedQuat);
+    }
   }
 }
