@@ -39,7 +39,7 @@ export function initCameraControl(domElement) {
       spaceHeld = true;
     }
   });
-
+ 
   window.addEventListener('keyup', e => {
     if (e.code === 'Space') {
       spaceHeld = false;
