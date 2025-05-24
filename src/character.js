@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isWalkable } from './collision';
 
 
 export const character = new THREE.Mesh(
@@ -8,6 +9,7 @@ export const character = new THREE.Mesh(
 
 // position initiale
 character.position.set(0, 0.5, 0);
+let lastSafePos = new THREE.Vector3(0, 0.5, 0);
 
 let path = [];
 const speed = 9; // unités/seconde (3)
@@ -41,4 +43,39 @@ export function updateCharacter(delta) {
     // waypoint atteint : on le retire
     path.shift();
   }
+}
+
+export function checkCharacterPosition() {
+  // Correction si bloqué dans un mur (walkable = noir)
+  if (!isWalkable(character.position.x, character.position.z)) {
+    // Recherche locale d'un point walkable autour de la position actuelle
+    const safe = findNearestWalkable(character.position.x, character.position.z);
+    if (safe) {
+      character.position.set(safe.x, character.position.y, safe.z);
+    } else {
+      // Si aucun point walkable trouvé : revient à la dernière safe pos
+      character.position.copy(lastSafePos);
+    }
+  } else {
+    // On stocke la dernière position walkable connue
+    lastSafePos.copy(character.position);
+  }
+}
+
+// Fonction utilitaire de recherche locale (identique à la précédente)
+function findNearestWalkable(x, z) {
+  const RADIUS = 1.5;
+  const STEPS = 24;
+  const INCR  = 0.18;
+  for (let r = INCR; r <= RADIUS; r += INCR) {
+    for (let a = 0; a < STEPS; ++a) {
+      const theta = (a / STEPS) * Math.PI * 2;
+      const nx = x + Math.cos(theta) * r;
+      const nz = z + Math.sin(theta) * r;
+      if (isWalkable(nx, nz)) {
+        return { x: nx, z: nz };
+      }
+    }
+  }
+  return null;
 }

@@ -87,7 +87,6 @@ export function initCameraControl(domElement) {
       MIN_ZOOM,
       MAX_ZOOM
     );
-    console.log('Current zoom level:', zoomDistance);
     const dir = camera.position.clone()
       .sub(character.position)
       .normalize();
