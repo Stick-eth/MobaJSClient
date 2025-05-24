@@ -12,12 +12,6 @@ export function initOverlay() {
   overlay.appendChild(img);
   document.body.appendChild(overlay);
 
-  // Tooltip caché par défaut
-    const tooltip = document.createElement('div');
-    tooltip.id = 'overlay-tooltip';
-    tooltip.textContent = 'Appuyez sur Y pour déverrouiller';
-    overlay.appendChild(tooltip);
-
   // Met à jour l'icône selon l'état courant
   function updateIcon(locked = isCameraLocked()) {
     img.src = locked ? lockedIcon : unlockedIcon;
@@ -25,9 +19,6 @@ export function initOverlay() {
       ? 'Caméra verrouillée'
       : 'Caméra déverrouillée';
 
-      tooltip.textContent = locked
-      ? 'Appuyez sur Y pour déverrouiller'
-      : 'Appuyez sur Y pour verrouiller';
   }
 
   // Au chargement initial
@@ -42,16 +33,5 @@ export function initOverlay() {
   img.addEventListener('click', () => {
     toggleLock();
   });
-
-   // Affiche le tooltip après 1 s de survol, cache au départ ou à la sortie
-    let hoverTimer;
-    img.addEventListener('mouseenter', () => {
-      hoverTimer = setTimeout(() => {
-        tooltip.style.opacity = '1';
-      }, 1000);
-    });
-    img.addEventListener('mouseleave', () => {
-      clearTimeout(hoverTimer);
-      tooltip.style.opacity = '0';
-    });
+  
 }    

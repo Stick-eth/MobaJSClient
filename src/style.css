@@ -34,21 +34,3 @@ body {
   height: 24px;
   cursor: pointer;
 }
-
-/* Tooltip positionné au-dessus de l'icône */
-#overlay-tooltip {
-  position: absolute;
-  bottom: 100%;       /* juste au-dessus */
-  right: 0;
-  margin-bottom: 6px;
-  padding: 4px 8px;
-  background: rgba(0,0,0,0.75);
-  color: #fff;
-  font-size: 12px;
-  border-radius: 4px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-  z-index: 1001;
-}
