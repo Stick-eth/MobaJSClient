@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isWalkable } from './collision.js';
 
 export const character = new THREE.Mesh(
   new THREE.SphereGeometry(0.5, 32, 32),
@@ -15,8 +16,10 @@ export function initCharacter(scene) {
   scene.add(character);
 }
 
-export function setTarget(position) {
-  targetPos = position.clone();
+export function setTarget(position) { 
+    if (isWalkable(position.x, position.z)) {
+    targetPos = position.clone();
+  }
   targetPos.y = character.position.y;
 }
 

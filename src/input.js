@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { renderer } from './scene.js';
-import { camera, plane } from './scene.js';
+import { renderer, camera } from './scene.js';
+import { terrainMesh } from './terrain.js';
 import { setTarget } from './character.js';
+import { isWalkable } from './collision.js';
 import { showMarker } from './marker.js';
 
 const raycaster = new THREE.Raycaster();
@@ -18,11 +19,13 @@ export function initInput() {
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
 
-    const hits = raycaster.intersectObject(plane);
+    const hits = raycaster.intersectObject(terrainMesh);
     if (hits.length > 0) {
       const point = hits[0].point;
-      setTarget(point);
-      showMarker(point);
+     //if (isWalkable(point.x, point.z)) {
+       setTarget(point);
+       showMarker(point);
+     //};
     }
   });
 
