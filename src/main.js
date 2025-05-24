@@ -2,10 +2,12 @@ import { initScene, scene, renderer, camera } from './scene.js';
 import { initCharacter, updateCharacter } from './character.js';
 import { initCameraControl, updateCamera } from './cameraController.js';
 import { initInput } from './input.js';
+import { initOverlay } from './overlay.js';
 
 initScene();
 initCharacter(scene);
 initInput();
+initOverlay();
 initCameraControl(renderer.domElement);
 
 let lastTime = performance.now();

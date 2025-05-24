@@ -30,17 +30,23 @@ const EDGE_MARGIN  = 50;
 export function initCameraControl(domElement) {
   const canvas = domElement;
 
-  // — Y pour lock/unlock
+  // — Y pour lock/unlock et Space pour track temporaire
   window.addEventListener('keydown', e => {
     if (e.key.toLowerCase() === 'y') {
-      locked = !locked;
-      // **Stocke l’orientation actuelle au passage en unlock**
-      if (!locked) storedQuat.copy(camera.quaternion);
+      toggleLock();
     }
-    if (e.code === 'Space') spaceHeld = true;
+    if (e.code === 'Space') {
+      spaceHeld = true;
+      // recentrage immédiat
+      camera.position.copy(character.position).add(cameraOffset);
+      camera.lookAt(character.position);
+    }
   });
+
   window.addEventListener('keyup', e => {
-    if (e.code === 'Space') spaceHeld = false;
+    if (e.code === 'Space') {
+      spaceHeld = false;
+    }
   });
 
   // — Clic-molette : début du pan si unlock
@@ -50,7 +56,6 @@ export function initCameraControl(domElement) {
       isPanning = true;
       panStart.set(e.clientX, e.clientY);
       panDelta.set(0, 0);
-      // on actualise storedQuat en cas de pan juste après unlock
       storedQuat.copy(camera.quaternion);
     }
   });
@@ -113,23 +118,34 @@ export function updateCamera(delta) {
       const speed = dist * SPEED_FACTOR;
       camera.position.addScaledVector(dir, speed * delta);
     }
-    // preserve l’angle stocké
     camera.quaternion.copy(storedQuat);
 
   // --- Edge-scroll si curseur dans la zone de bordure ---
   } else {
     let ex = 0, ez = 0;
-    if (x <= EDGE_MARGIN)         ex = -1;
-    else if (x >= w - EDGE_MARGIN) ex = 1;
-    // inversion haut/bas si besoin
-    if (y <= EDGE_MARGIN)         ez = -1;
-    else if (y >= h - EDGE_MARGIN) ez = 1;
+    if (x <= EDGE_MARGIN)           ex = -1;
+    else if (x >= w - EDGE_MARGIN)  ex = 1;
+    if (y <= EDGE_MARGIN)           ez = -1;
+    else if (y >= h - EDGE_MARGIN)  ez = 1;
 
     if (ex !== 0 || ez !== 0) {
       const dir = new THREE.Vector3(ex, 0, ez).normalize();
       camera.position.addScaledVector(dir, EDGE_SPEED * delta);
-      // preserve l’angle stocké
       camera.quaternion.copy(storedQuat);
     }
   }
+}
+
+export function toggleLock() {
+  locked = !locked;
+  if (!locked) {
+    storedQuat.copy(camera.quaternion);
+  }
+  document.dispatchEvent(new CustomEvent('cameraLockChanged', {
+    detail: { locked }
+  }));
+}
+
+export function isCameraLocked() {
+  return locked;
 }
