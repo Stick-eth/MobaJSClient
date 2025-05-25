@@ -1,8 +1,17 @@
 import * as THREE from 'three';
 import { isWalkable } from './collision';
 import { socket } from "./socket.js";
+import { findPath,hasLineOfSight } from './pathfinding.js'; // ← à ne pas oublier !
 
+export let attackTarget = null;
+export let attackRange = 3; // portée d’attaque
 
+let lastAttackTargetPos = null;
+
+export function moveToAttackTarget(targetMesh) {
+  attackTarget = targetMesh;
+  // A chaque updateCharacter, on va se rapprocher automatiquement
+}
 
 export const character = new THREE.Mesh(
   new THREE.SphereGeometry(0.5, 32, 32),
@@ -25,6 +34,38 @@ export function setPath(newPath) {
 }
 
 export function updateCharacter(delta) {
+  if (attackTarget) {
+    const targetPos = attackTarget.position.clone();
+    targetPos.y = character.position.y;
+    const dist = character.position.distanceTo(targetPos);
+
+    if (dist > attackRange) {
+      // On enlève totalement la logique ligne de vue directe (pour éviter le bug)
+      if (
+        !lastAttackTargetPos ||
+        targetPos.distanceTo(lastAttackTargetPos) > 0.3 ||
+        path.length === 0
+      ) {
+        // Toujours utiliser le pathfinding !
+        const bfsPath = findPath(
+          character.position.x, character.position.z,
+          targetPos.x, targetPos.z
+        ).map(v => v.clone());
+        if (bfsPath.length > 1) {
+          setPath(bfsPath);
+        } else {
+          setPath([]); // Rien à faire si vraiment bloqué
+        }
+        lastAttackTargetPos = targetPos.clone();
+      }
+      // Sinon on suit le path courant
+    } else {
+      setPath([]);
+      lastAttackTargetPos = null;
+    }
+  }
+
+  // Si pas de cible d'attaque, on suit le path défini
   if (path.length === 0) return;
 
   // prochaine cible sur le chemin

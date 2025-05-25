@@ -5,20 +5,30 @@ import { isWalkable } from './collision.js';
 // Taille du monde (doit être la même que dans collision.js)
 const WORLD_SIZE = 100;
 // Nombre de cellules par côté (grille WORLD_SIZE×WORLD_SIZE subdivisée)
-const GRID_DIVS  = 100;
+const GRID_DIVS  = 200;
 const CELL_SIZE  = WORLD_SIZE / GRID_DIVS;
 
 // Directions 8-voisines avec contrôle de diagonale
-const NEIGHBORS = [
-  { dx:  1, dz:  0 },
-  { dx: -1, dz:  0 },
-  { dx:  0, dz:  1 },
-  { dx:  0, dz: -1 },
-  { dx:  1, dz:  1 },
-  { dx:  1, dz: -1 },
-  { dx: -1, dz:  1 },
-  { dx: -1, dz: -1 },
-];
+const NEIGHBORS = [];
+for (let i = 0; i < 16; i++) {
+  const angle = (i / 16) * 2 * Math.PI;
+  NEIGHBORS.push({
+    dx: Math.round(Math.cos(angle)),
+    dz: Math.round(Math.sin(angle))
+  });
+}
+// Filtrer les doublons, car cos/sin arrondis peuvent donner plusieurs fois le même (0,1), (1,0), etc.
+const unique = {};
+const ND = [];
+for (const d of NEIGHBORS) {
+  const key = `${d.dx},${d.dz}`;
+  if (!unique[key] && (d.dx !== 0 || d.dz !== 0)) {
+    unique[key] = true;
+    ND.push(d);
+  }
+}
+NEIGHBORS.length = 0;
+NEIGHBORS.push(...ND);
 
 // Convertit coord monde → i,j sur grille
 function worldToGrid(x, z) {
@@ -90,18 +100,19 @@ export function findPath(startX, startZ, endX, endZ) {
 
   if (!found) return [];
 
-  // Reconstruction du chemin
-  const path = [];
-  let cur = idx(ei, ej);
-  while (cur !== idx(si, sj) && cur !== -1) {
-    const i = cur % size;
-    const j = Math.floor(cur / size);
-    path.push(gridToWorld(i, j));
-    cur = parent[cur];
-  }
-  // ajoute le point de départ à la fin (facultatif)
-  path.push(gridToWorld(si, sj));
-  path.reverse();
+    // Reconstruction du chemin
+    const path = [];
+    let cur = idx(ei, ej);
+    while (cur !== idx(si, sj) && cur !== -1) {
+      const i = cur % size;
+      const j = Math.floor(cur / size);
+      path.push(gridToWorld(i, j));
+      cur = parent[cur];
+    }
+    // Ajoute le point de départ réel (vraie position du perso, et non le centre de cellule)
+    path.push(new THREE.Vector3(startX, 0.5, startZ));
+    path.reverse();
+
 
   function hasLineOfSight(a, b) {
   const steps = Math.ceil(a.distanceTo(b) / (CELL_SIZE * 0.5));

@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { scene } from './scene.js';
+import { onRemotePlayerRemoved } from './input.js';
 
 // Map des joueurs distants : id -> mesh
 export const remotePlayers = {};
+
 
 // Création d’un mesh pour un autre joueur
 function createRemotePlayerMesh() {
@@ -19,6 +21,7 @@ export function addRemotePlayer(id, x, z) {
   mesh.position.set(x, 0.5, z);
   scene.add(mesh);
   remotePlayers[id] = mesh;
+  mesh.userData.id = id; // stocke l'ID pour référence
 }
 
 // Met à jour la position du joueur
@@ -37,5 +40,6 @@ export function removeRemotePlayer(id) {
     remotePlayers[id].geometry.dispose();
     remotePlayers[id].material.dispose();
     delete remotePlayers[id];
+    onRemotePlayerRemoved(id);
   }
 }

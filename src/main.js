@@ -6,6 +6,8 @@
  import { showMarker, updateMarker } from './marker.js';
  import { initSpells, updateSpells } from './spells.js';
  import { socket } from "./socket.js";
+ import { updateInput } from './input.js';
+ 
 
  
  socket.on("connect", () => {
@@ -29,6 +31,7 @@
    updateMarker(delta);
    updateSpells(delta);
    checkCharacterPosition();
+   updateInput();
 
    renderer.render(scene, camera);
    requestAnimationFrame(animate);

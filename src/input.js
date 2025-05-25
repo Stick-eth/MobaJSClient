@@ -1,39 +1,98 @@
-import * as THREE from 'three';
+import * as THREE from 'three'; 
 import { renderer, camera } from './scene.js';
 import { terrainMesh } from './terrain.js';
-import { setPath,character } from './character.js';
+import { setPath, character, moveToAttackTarget, attackTarget } from './character.js';
 import { isWalkable } from './collision.js';
 import { showMarker } from './marker.js';
-import { findPath } from './pathfinding.js';
-import { hasLineOfSight } from './pathfinding.js'; 
-
+import { findPath, hasLineOfSight } from './pathfinding.js';
+import { remotePlayers } from './remotePlayers.js';
+import { socket } from './socket.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
 
+let hoveredEnemy = null;
+let currentAttackTarget = null;
+
+// -- Survol souris sur joueurs ennemis --
+function updateHoverEnemy() {
+  raycaster.setFromCamera(mouse, camera);
+  const meshes = Object.values(remotePlayers);
+
+  const hits = raycaster.intersectObjects(meshes);
+  if (hits.length > 0) {
+    const mesh = hits[0].object;
+    if (hoveredEnemy !== mesh) {
+      if (hoveredEnemy) hoveredEnemy.material.emissive?.set(0x000000);
+      hoveredEnemy = mesh;
+      hoveredEnemy.material.emissive?.set(0xff2222); // rouge
+    }
+  } else {
+    if (hoveredEnemy) hoveredEnemy.material.emissive?.set(0x000000);
+    hoveredEnemy = null;
+  }
+}
+
+// -- Attaque auto sur joueur ciblé (juste la poursuite, toujours pathfinding) --
+function startAttackingEnemy(enemyMesh) {
+  stopAttacking();
+  currentAttackTarget = enemyMesh;
+  moveToAttackTarget(enemyMesh); // La logique dans character.js fait TOUJOURS du pathfinding
+}
+
+function stopAttacking() {
+  currentAttackTarget = null;
+  // Arrête la poursuite en supprimant la cible dans character.js
+  if (attackTarget) {
+    moveToAttackTarget(null); // Définit attackTarget à null côté character.js
+  }
+}
+
+// Permet à remotePlayers.js de signaler si une cible disparaît
+export function onRemotePlayerRemoved(id) {
+  if (currentAttackTarget && currentAttackTarget.userData.id === id) {
+    stopAttacking();
+  }
+}
+
+// -- Gestion souris globale (track en temps réel pour hover) --
+window.addEventListener('mousemove', e => {
+  mouse.x =  (e.clientX / window.innerWidth)  * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+});
+
 export function initInput() {
   const canvas = renderer.domElement;
 
-  // 1. Clic droit pressé → déplacement immédiat du personnage + affichage du marker
   canvas.addEventListener('mousedown', e => {
-    if (e.button === 2) { // bouton droit pressé
+    if (e.button === 2) { // bouton droit
       e.preventDefault();
 
-      mouse.x =  (e.clientX / window.innerWidth)  * 2 - 1;
-      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
 
+      // -- Clic sur un joueur ennemi --
+      const enemyMeshes = Object.values(remotePlayers);
+      const hitEnemies = raycaster.intersectObjects(enemyMeshes);
+      if (hitEnemies.length > 0) {
+        const enemyMesh = hitEnemies[0].object;
+        startAttackingEnemy(enemyMesh);
+        return; // On n'autorise pas déplacement sur clic joueur
+      }
+
+      // -- Clic droit sur le terrain pour déplacer --
       const hits = raycaster.intersectObject(terrainMesh);
       if (hits.length > 0) {
+        stopAttacking(); // Annule attaque en cours si on clique le sol
         const point = hits[0].point;
         if (isWalkable(point.x, point.z)) {
-          if (hasLineOfSight(character.position, point)) {
+          const dist = character.position.distanceTo(point);
+          if (dist < 2 && hasLineOfSight(character.position, point)) {
+            // Ligne droite seulement pour petits déplacements sans obstacle
             const flatPoint = point.clone();
             flatPoint.y = character.position.y;
             setPath([flatPoint]);
             showMarker(flatPoint);
           } else {
-            // Sinon on calcule le chemin BFS
             const path = findPath(
               character.position.x, character.position.z,
               point.x, point.z
@@ -46,19 +105,21 @@ export function initInput() {
         }
       }
     }
-    // Toujours bloquer scroll molette natif
     if (e.button === 1) {
       e.preventDefault();
     }
   });
 
-  // 2. Empêcher l'apparition du menu contextuel
   canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
   });
 
-  // 3. Bloquer le scroll natif au passage de la molette
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
   }, { passive: false });
+}
+
+// Appelé à chaque frame depuis main.js pour gérer hover en temps réel
+export function updateInput() {
+  updateHoverEnemy();
 }
