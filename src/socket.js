@@ -1,5 +1,10 @@
+import * as THREE from 'three';
 import { io } from "socket.io-client";
 import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer } from "./remotePlayers.js";
+import { remotePlayers } from './remotePlayers.js';
+import { scene } from './scene.js';
+import { launchProjectile } from './projectiles.js';
+import { character } from './character.js'; // <--- AJOUTE CETTE LIGNE
 
 export const socket = io("http://localhost:3000");
 
@@ -37,3 +42,13 @@ socket.on("playerPositionUpdate", (data) => {
   }
 });
 
+socket.on('autoattack', ({ from, targetId, pos }) => {
+  // Si la cible c'est moi, il faut aussi animer le projectile vers mon propre personnage
+  const targetMesh = (targetId === socket.id) ? character : remotePlayers[targetId];
+  if (!targetMesh) return;
+
+  // Si le lanceur c'est moi, pos est déjà la bonne position
+  // Si le lanceur est un autre, pos est la position donnée par le serveur (c'est OK)
+
+  launchProjectile(new THREE.Vector3(pos.x, pos.y, pos.z), targetMesh);
+});

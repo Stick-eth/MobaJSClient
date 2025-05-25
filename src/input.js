@@ -11,8 +11,13 @@ import { socket } from './socket.js';
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
 
+let lastAutoAttackTime = 0;
+const AUTOATTACK_COOLDOWN = 600; // en ms
+
 let hoveredEnemy = null;
 let currentAttackTarget = null;
+let autoAttackInterval = null;
+
 
 // -- Survol souris sur joueurs ennemis --
 function updateHoverEnemy() {
@@ -37,14 +42,16 @@ function updateHoverEnemy() {
 function startAttackingEnemy(enemyMesh) {
   stopAttacking();
   currentAttackTarget = enemyMesh;
-  moveToAttackTarget(enemyMesh); // La logique dans character.js fait TOUJOURS du pathfinding
+  moveToAttackTarget(enemyMesh);
 }
+
 
 function stopAttacking() {
   currentAttackTarget = null;
-  // Arrête la poursuite en supprimant la cible dans character.js
+  if (autoAttackInterval) clearInterval(autoAttackInterval);
+  autoAttackInterval = null;
   if (attackTarget) {
-    moveToAttackTarget(null); // Définit attackTarget à null côté character.js
+    moveToAttackTarget(null);
   }
 }
 
@@ -120,6 +127,26 @@ export function initInput() {
 }
 
 // Appelé à chaque frame depuis main.js pour gérer hover en temps réel
-export function updateInput() {
+export function updateInput(delta = 1/60) {
   updateHoverEnemy();
+
+  // -- Gestion autoattack (cooldown géré proprement) --
+  if (currentAttackTarget) {
+    const dist = character.position.distanceTo(currentAttackTarget.position);
+    const now = Date.now();
+    if (dist <= 6 && (now - lastAutoAttackTime) >= AUTOATTACK_COOLDOWN) {
+      // Peut attaquer
+      socket.emit("autoattack", {
+        targetId: currentAttackTarget.userData.id,
+        from: socket.id,
+        pos: {
+          x: character.position.x,
+          y: character.position.y,
+          z: character.position.z,
+        }
+      });
+      lastAutoAttackTime = now;
+    }
+  }
 }
+
