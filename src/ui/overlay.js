@@ -1,7 +1,7 @@
 // src/overlay.js
-import lockedIcon   from './assets/locked.png';
-import unlockedIcon from './assets/unlocked.png';
-import { getSpellsState } from './spells.js';
+import lockedIcon   from '../assets/locked.png';
+import unlockedIcon from '../assets/unlocked.png';
+import { getSpellsState } from '../player/spells.js';
 import { toggleLock, isCameraLocked } from './cameraController.js';
 
 export function initOverlay() {

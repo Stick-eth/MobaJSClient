@@ -1,6 +1,6 @@
 // src/spells.js
 import * as THREE from 'three';
-import { scene, camera } from './scene.js';
+import { scene, camera } from '../world/scene.js';
 import { character } from './character.js';
 
 // --- CONFIGURATION DES SORTS ---

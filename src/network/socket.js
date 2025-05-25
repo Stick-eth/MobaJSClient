@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { io } from "socket.io-client";
 import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer } from "./remotePlayers.js";
 import { remotePlayers } from './remotePlayers.js';
-import { scene } from './scene.js';
-import { launchProjectile } from './projectiles.js';
-import { character } from './character.js'; // <--- AJOUTE CETTE LIGNE
+import { scene } from '../world/scene.js';
+import { launchProjectile } from '../player/projectiles.js';
+import { character } from '../player/character.js'; // <--- AJOUTE CETTE LIGNE
 
 export const socket = io("http://localhost:3000");
 

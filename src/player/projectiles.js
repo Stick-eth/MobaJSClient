@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { scene } from './scene.js';
-import { remotePlayers } from './remotePlayers.js';
+import { scene } from '../world/scene.js';
+import { remotePlayers } from '../network/remotePlayers.js';
 
-export function launchProjectile(startPos, targetMesh, travelSpeed = 16, impactRadius = 0.6) {
+export function launchProjectile(startPos, targetMesh, travelSpeed = 5, impactRadius = 0.6) {
   const geometry = new THREE.SphereGeometry(0.15, 12, 12);
   const material = new THREE.MeshStandardMaterial({ color: 0xffff55, emissive: 0xeeaa00 });
   const proj = new THREE.Mesh(geometry, material);

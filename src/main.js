@@ -1,12 +1,13 @@
- import { initScene, scene, renderer, camera } from './scene.js';
- import { initCharacter, updateCharacter, checkCharacterPosition } from './character.js';
- import { initCameraControl, updateCamera } from './cameraController.js';
- import { initInput } from './input.js';
- import { initOverlay } from './overlay.js';
- import { showMarker, updateMarker } from './marker.js';
- import { initSpells, updateSpells } from './spells.js';
- import { socket } from "./socket.js";
- import { updateInput } from './input.js';
+ import { initScene, scene, renderer, camera } from './world/scene.js';
+ import { initCharacter, updateCharacter, checkCharacterPosition } from './player/character.js';
+ import { initCameraControl, updateCamera } from './ui/cameraController.js';
+ import { initInput } from './core/input.js';
+ import { initOverlay } from './ui/overlay.js';
+ import { showMarker, updateMarker } from './ui/marker.js';
+ import { initSpells, updateSpells } from './player/spells.js';
+ import { socket } from "./network/socket.js";
+ import { updateInput } from './core/input.js';
+
  
 
  

@@ -1,18 +1,18 @@
 import * as THREE from 'three'; 
-import { renderer, camera } from './scene.js';
-import { terrainMesh } from './terrain.js';
-import { setPath, character, moveToAttackTarget, attackTarget } from './character.js';
-import { isWalkable } from './collision.js';
-import { showMarker } from './marker.js';
-import { findPath, hasLineOfSight } from './pathfinding.js';
-import { remotePlayers } from './remotePlayers.js';
-import { socket } from './socket.js';
+import { renderer, camera } from '../world/scene.js';
+import { terrainMesh } from '../world/terrain.js';
+import { setPath, character, moveToAttackTarget, attackTarget } from '../player/character.js';
+import { isWalkable } from '../world/collision.js';
+import { showMarker } from '../ui/marker.js';
+import { findPath, hasLineOfSight } from '../player/pathfinding.js';
+import { remotePlayers } from '../network/remotePlayers.js';
+import { socket } from '../network/socket.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
 
 let lastAutoAttackTime = 0;
-const AUTOATTACK_COOLDOWN = 600; // en ms
+const AUTOATTACK_COOLDOWN = 650; // en ms
 
 let hoveredEnemy = null;
 let currentAttackTarget = null;

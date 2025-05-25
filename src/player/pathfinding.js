@@ -1,6 +1,6 @@
 // src/pathfinding.js
 import * as THREE from 'three';
-import { isWalkable } from './collision.js';
+import { isWalkable } from '../world/collision.js';
 
 // Taille du monde (doit être la même que dans collision.js)
 const WORLD_SIZE = 100;

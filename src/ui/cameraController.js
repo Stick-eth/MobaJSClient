@@ -1,7 +1,7 @@
 // src/cameraController.js
 import * as THREE from 'three';
-import { camera, cameraOffset } from './scene.js';
-import { character } from './character.js';
+import { camera, cameraOffset } from '../world/scene.js';
+import { character } from '../player/character.js';
 
 let locked      = true;
 let isPanning   = false;

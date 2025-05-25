@@ -1,6 +1,6 @@
 // src/marker.js
 import * as THREE from 'three';
-import { scene } from './scene.js';
+import { scene } from '../world/scene.js';
 
 let markerGroup = null;
 let startTime   = 0;

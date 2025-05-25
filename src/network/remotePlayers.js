@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { scene } from './scene.js';
-import { onRemotePlayerRemoved } from './input.js';
+import { scene } from '../world/scene.js';
+import { onRemotePlayerRemoved } from '../core/input.js';
 
 // Map des joueurs distants : id -> mesh
 export const remotePlayers = {};

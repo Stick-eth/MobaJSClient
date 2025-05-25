@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { isWalkable } from './collision';
-import { socket } from "./socket.js";
+import { isWalkable } from '../world/collision.js';
+import { socket } from "../network/socket.js";
 import { findPath,hasLineOfSight } from './pathfinding.js'; // ← à ne pas oublier !
 
 export let attackTarget = null;
-export let attackRange = 3; // portée d’attaque
+export let attackRange = 4; // portée d’attaque
 
 let lastAttackTargetPos = null;
 
