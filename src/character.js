@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { isWalkable } from './collision';
+import { socket } from "./socket.js";
+
 
 
 export const character = new THREE.Mesh(
@@ -79,3 +81,23 @@ function findNearestWalkable(x, z) {
   }
   return null;
 }
+
+let lastSentPosition = new THREE.Vector2(character.position.x, character.position.z);
+
+function positionsAreEqual(a, b, epsilon = 0.001) {
+  return Math.abs(a.x - b.x) < epsilon && Math.abs(a.y - b.y) < epsilon;
+}
+
+function maybeSendPosition() {
+  const current = new THREE.Vector2(character.position.x, character.position.z);
+  if (!positionsAreEqual(current, lastSentPosition)) {
+    socket.emit('playerPosition', {
+      x: character.position.x,
+      z: character.position.z
+    });
+    lastSentPosition.copy(current);
+  }
+}
+
+const tickrate = 1/20; // 20 updates par seconde
+setInterval(maybeSendPosition, tickrate * 1000);

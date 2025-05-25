@@ -5,7 +5,12 @@
  import { initOverlay } from './overlay.js';
  import { showMarker, updateMarker } from './marker.js';
  import { initSpells, updateSpells } from './spells.js';
+ import { socket } from "./socket.js";
 
+ 
+ socket.on("connect", () => {
+  console.log("Connecté au serveur Socket.IO !", socket.id);
+  });
 
  initScene();
  initCharacter(scene);
