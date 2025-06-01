@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { scene } from '../world/scene.js';
+import { projectiles } from './spells.js';
 import { remotePlayers } from '../network/remotePlayers.js';
 
 export function launchProjectile(startPos, targetMesh, travelSpeed = 5, impactRadius = 0.6) {
@@ -12,6 +13,7 @@ export function launchProjectile(startPos, targetMesh, travelSpeed = 5, impactRa
 
   let alive = true; 
   console.log("Projectile launched from", startPos, "towards", targetMesh.position);
+  
   // Boucle d’animation du projectile
   function animateProjectile() {
     if (!alive) return;
@@ -50,3 +52,25 @@ export function launchProjectile(startPos, targetMesh, travelSpeed = 5, impactRa
 
   animateProjectile();
 }
+
+export function qSpellCast(from, pos, dir) {
+  // Crée le projectile Q
+  const geom = new THREE.SphereGeometry(0.22, 12, 12);
+  const mat  = new THREE.MeshBasicMaterial({ color: 0x39c6ff });
+  const mesh = new THREE.Mesh(geom, mat);
+  
+  
+  mesh.position.copy(pos);
+  mesh.position.y += 0.3; // pour que ça ne touche pas le sol direct
+
+  scene.add(mesh);
+
+  projectiles.push({
+    mesh,
+    direction: dir,
+    speed: 25,
+    timeLeft: 0.3 // durée de vie en secondes
+  });
+
+  console.log("Q Spell cast from", from, "at position", pos, "with direction", dir);
+  }

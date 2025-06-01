@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer } from "./remotePlayers.js";
 import { remotePlayers } from './remotePlayers.js';
 import { scene } from '../world/scene.js';
-import { launchProjectile } from '../player/projectiles.js';
+import { launchProjectile, qSpellCast } from '../player/projectiles.js';
 import { character } from '../player/character.js'; // <--- AJOUTE CETTE LIGNE
 
 export const socket = io("http://localhost:3000");
@@ -52,3 +52,13 @@ socket.on('autoattack', ({ from, targetId, pos }) => {
 
   launchProjectile(new THREE.Vector3(pos.x, pos.y, pos.z), targetMesh);
 });
+
+
+socket.on('spellCast', ({ spell, from, pos, dir }) => {
+  // Si le lanceur c'est moi, pos est déjà la bonne position
+  // Si le lanceur est un autre, pos est la position donnée par le serveur (c'est OK)
+
+  if (spell === 'Q') {
+    qSpellCast(from, pos, dir);
+  } 
+})

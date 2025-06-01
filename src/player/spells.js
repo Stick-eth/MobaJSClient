@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { scene, camera } from '../world/scene.js';
 import { character } from './character.js';
+import { socket } from '../network/socket.js';
+import { qSpellCast } from './projectiles.js';  
 
 // --- CONFIGURATION DES SORTS ---
 const SPELLS = [
@@ -19,7 +21,7 @@ const spellState = SPELLS.map(s => ({
   lastCast: -Infinity,
 }));
 
-const projectiles = []; // { mesh, direction, speed, timeLeft }
+export let projectiles = []; // { mesh, direction, speed, timeLeft }
 
 export function initSpells() {
   window.addEventListener('keydown', handleSpellKeydown);
@@ -66,6 +68,7 @@ function handleSpellKeydown(e) {
 
   if (SPELLS[idx].key === 'a') {
     castEzrealQ();
+    
     spellState[idx].cooldown = SPELLS[idx].cooldown;
     spellState[idx].lastCast = performance.now() / 1000;
   }
@@ -99,6 +102,21 @@ function castEzrealQ() {
     direction: dir,
     speed: 25,
     timeLeft: 0.3 // durée de vie en secondes
+  });
+
+  socket.emit('spellCast', {
+    spell: 'Q',
+    from: socket.id,
+    pos: {
+      x: character.position.x,
+      y: character.position.y,
+      z: character.position.z
+    },
+    dir: {
+      x: dir.x,
+      y: dir.y,
+      z: dir.z
+    }
   });
 }
 
