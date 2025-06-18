@@ -75,7 +75,8 @@ export function updateCharacter(delta) {
 
   if (dist > 0.1) {
     dir.normalize();
-    character.position.addScaledVector(dir, speed * delta);
+    const step = Math.min(speed * delta, dist);
+    character.position.addScaledVector(dir, step);
     // orientation
     const q = new THREE.Quaternion().setFromUnitVectors(
       new THREE.Vector3(0, 0, 1),
