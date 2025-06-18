@@ -44,6 +44,17 @@ function gridToWorld(gi, gj) {
   return new THREE.Vector3(x, 0.5, z);
 }
 
+export function hasLineOfSight(a, b) {
+  const steps = Math.ceil(a.distanceTo(b) / (CELL_SIZE * 0.5));
+  for (let i = 1; i < steps; ++i) {
+    const t = i / steps;
+    const x = a.x + (b.x - a.x) * t;
+    const z = a.z + (b.z - a.z) * t;
+    if (!isWalkable(x, z)) return false;
+  }
+  return true;
+}
+
 export function findPath(startX, startZ, endX, endZ) {
   const { gi: si, gj: sj } = worldToGrid(startX, startZ);
   const { gi: ei, gj: ej } = worldToGrid(endX, endZ);
@@ -114,16 +125,6 @@ export function findPath(startX, startZ, endX, endZ) {
     path.reverse();
 
 
-  function hasLineOfSight(a, b) {
-  const steps = Math.ceil(a.distanceTo(b) / (CELL_SIZE * 0.5));
-  for (let i = 1; i < steps; ++i) {
-    const t = i / steps;
-    const x = a.x + (b.x - a.x) * t;
-    const z = a.z + (b.z - a.z) * t;
-    if (!isWalkable(x, z)) return false;
-  }
-  return true;
-}
 
 function smoothPath(path) {
   if (path.length <= 2) return path;
@@ -143,15 +144,4 @@ function smoothPath(path) {
 }
 
   return smoothPath(path);
-}
-
-export function hasLineOfSight(a, b) {
-  const steps = Math.ceil(a.distanceTo(b) / (CELL_SIZE * 0.5));
-  for (let i = 1; i < steps; ++i) {
-    const t = i / steps;
-    const x = a.x + (b.x - a.x) * t;
-    const z = a.z + (b.z - a.z) * t;
-    if (!isWalkable(x, z)) return false;
-  }
-    return true;
 }
