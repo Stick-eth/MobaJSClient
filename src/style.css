@@ -35,6 +35,51 @@ body {
   cursor: pointer;
 }
 
+#death-overlay div { margin: 8px 0; }
+#death-overlay { text-shadow: 0 2px 4px rgba(0,0,0,0.6); }
+
+#health-bars {
+  font-family: sans-serif;
+}
+
+.hp-bar {
+  position: absolute;
+  min-width: 64px;
+  height: 8px;
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 4px;
+  background: rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+
+.hp-bar-fill {
+  height: 100%;
+  width: 100%;
+  background: #c0392b;
+  transition: width 0.15s ease-out;
+}
+
+.hp-bar.hp-self .hp-bar-fill {
+  background: #27ae60;
+}
+
+#damage-indicator {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, rgba(255,0,0,0) 55%, rgba(255,0,0,0.25) 90%, rgba(255,0,0,0.4) 100%);
+  opacity: 0;
+}
+
+#damage-indicator.active {
+  animation: damageFlash 0.5s ease-out forwards;
+}
+
+@keyframes damageFlash {
+  0% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
 
 #spell-bar {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);

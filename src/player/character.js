@@ -21,6 +21,11 @@ export const character = new THREE.Mesh(
 // position initiale
 character.position.set(0, 0.5, 0);
 let lastSafePos = new THREE.Vector3(0, 0.5, 0);
+export let isDead = false;
+
+export function setDeadState(value) {
+  isDead = value;
+}
 
 let path = [];
 const speed = 9; // unités/seconde (3)
@@ -34,6 +39,7 @@ export function setPath(newPath) {
 }
 
 export function updateCharacter(delta) {
+  if (isDead) return;
   if (attackTarget) {
     const targetPos = attackTarget.position.clone();
     targetPos.y = character.position.y;
@@ -125,17 +131,20 @@ function findNearestWalkable(x, z) {
 }
 
 let lastSentPosition = new THREE.Vector2(character.position.x, character.position.z);
+let posSeq = 0; // sequence number for movement updates
 
 function positionsAreEqual(a, b, epsilon = 0.001) {
   return Math.abs(a.x - b.x) < epsilon && Math.abs(a.y - b.y) < epsilon;
 }
 
 function maybeSendPosition() {
+  if (isDead) return;
   const current = new THREE.Vector2(character.position.x, character.position.z);
   if (!positionsAreEqual(current, lastSentPosition)) {
     socket.emit('playerPosition', {
       x: character.position.x,
-      z: character.position.z
+      z: character.position.z,
+      seq: ++posSeq,
     });
     lastSentPosition.copy(current);
   }

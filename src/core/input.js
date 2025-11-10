@@ -1,7 +1,7 @@
 import * as THREE from 'three'; 
 import { renderer, camera } from '../world/scene.js';
 import { terrainMesh } from '../world/terrain.js';
-import { setPath, character, moveToAttackTarget, attackTarget } from '../player/character.js';
+import { setPath, character, moveToAttackTarget, attackTarget, isDead } from '../player/character.js';
 import { isWalkable } from '../world/collision.js';
 import { showMarker } from '../ui/marker.js';
 import { findPath, hasLineOfSight } from '../player/pathfinding.js';
@@ -72,6 +72,10 @@ export function initInput() {
   const canvas = renderer.domElement;
 
   canvas.addEventListener('mousedown', e => {
+    if (isDead) {
+      e.preventDefault();
+      return;
+    }
     if (e.button === 2) { // bouton droit
       e.preventDefault();
 
@@ -128,6 +132,10 @@ export function initInput() {
 
 // Appelé à chaque frame depuis main.js pour gérer hover en temps réel
 export function updateInput(delta = 1/60) {
+  if (isDead) {
+    if (currentAttackTarget) stopAttacking();
+    return;
+  }
   updateHoverEnemy();
 
   // -- Gestion autoattack (cooldown géré proprement) --

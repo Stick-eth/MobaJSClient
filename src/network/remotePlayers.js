@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { scene } from '../world/scene.js';
 import { onRemotePlayerRemoved } from '../core/input.js';
+import { trackHealthBar, untrackHealthBar, setHealthBarValue, setHealthBarVisible } from '../ui/healthBars.js';
 
 // Map des joueurs distants : id -> mesh
 export const remotePlayers = {};
@@ -15,13 +16,17 @@ function createRemotePlayerMesh() {
 }
 
 // Ajoute un joueur à la scène
-export function addRemotePlayer(id, x, z) {
+export function addRemotePlayer(id, x, z, hp = 100) {
   if (remotePlayers[id]) return; // existe déjà
   const mesh = createRemotePlayerMesh();
   mesh.position.set(x, 0.5, z);
   scene.add(mesh);
   remotePlayers[id] = mesh;
   mesh.userData.id = id; // stocke l'ID pour référence
+
+  trackHealthBar(id, mesh, { color: '#c0392b', max: 100 });
+  setHealthBarValue(id, hp ?? 100, 100);
+  setHealthBarVisible(id, true);
 }
 
 // Met à jour la position du joueur
@@ -41,5 +46,6 @@ export function removeRemotePlayer(id) {
     remotePlayers[id].material.dispose();
     delete remotePlayers[id];
     onRemotePlayerRemoved(id);
+    untrackHealthBar(id);
   }
 }

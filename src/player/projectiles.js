@@ -74,3 +74,97 @@ export function qSpellCast(from, pos, dir) {
 
   console.log("Q Spell cast from", from, "at position", pos, "with direction", dir);
   }
+
+// Linear, non-homing projectile synced with server params (pos, dir, speed, ttl)
+export function launchLinearProjectile(startPos, dir, speed = 10, ttl = 2.0, color = 0xffff55, onDestroy) {
+  const geometry = new THREE.SphereGeometry(0.15, 12, 12);
+  const material = new THREE.MeshStandardMaterial({ color, emissive: 0xeeaa00 });
+  const proj = new THREE.Mesh(geometry, material);
+  proj.position.set(startPos.x, startPos.y, startPos.z);
+  scene.add(proj);
+
+  // Normalize direction
+  const v = new THREE.Vector3(dir.x || 0, dir.y || 0, dir.z || 0);
+  if (v.lengthSq() === 0) v.set(0, 0, 1);
+  v.normalize();
+
+  let alive = true;
+  let remaining = Math.max(0, ttl || 0);
+  let lastTs = performance.now();
+
+  function step(now) {
+    if (!alive) return;
+    const dt = Math.min(0.05, (now - lastTs) / 1000);
+    lastTs = now;
+
+    proj.position.x += v.x * speed * dt;
+    proj.position.y += v.y * speed * dt;
+    proj.position.z += v.z * speed * dt;
+
+    // Don't auto-destroy at target original position; only expire if max lifetime exceeded
+    remaining -= dt;
+    if (remaining <= 0) {
+      // Fallback expiry (miss) – let onDestroy know
+      return destroy();
+    }
+    proj._animId = requestAnimationFrame(step);
+  }
+
+  function destroy() {
+    alive = false;
+    scene.remove(proj);
+    proj.geometry.dispose();
+    proj.material.dispose();
+    try { onDestroy && onDestroy(); } catch {}
+  }
+
+  proj._animId = requestAnimationFrame(step);
+  return { destroy };
+}
+
+// Homing projectile that chases a moving target mesh.
+// Server-authoritative: this visual does NOT auto-destroy on proximity; caller must destroy via handle.destroy (e.g. on projectileHit or TTL fallback).
+export function launchHomingProjectile(startPos, targetMesh, speed = 10, ttl = undefined, color = 0xffff55, onDestroy) {
+  const geometry = new THREE.SphereGeometry(0.15, 12, 12);
+  const material = new THREE.MeshStandardMaterial({ color, emissive: 0xeeaa00 });
+  const proj = new THREE.Mesh(geometry, material);
+  proj.position.set(startPos.x, startPos.y, startPos.z);
+  scene.add(proj);
+
+  let alive = true;
+  let lastTs = performance.now();
+  let remaining = (typeof ttl === 'number' && ttl > 0) ? ttl : undefined;
+
+  function step(now) {
+    if (!alive) return;
+    const dt = Math.min(0.05, (now - lastTs) / 1000);
+    lastTs = now;
+
+    if (!targetMesh || !targetMesh.position) {
+      return destroy();
+    }
+    const direction = new THREE.Vector3().subVectors(targetMesh.position, proj.position);
+    const dist = direction.length();
+    if (dist > 0.0001) {
+      direction.normalize();
+      proj.position.addScaledVector(direction, speed * dt);
+    }
+    // TTL fallback expiry if provided
+    if (remaining !== undefined) {
+      remaining -= dt;
+      if (remaining <= 0) return destroy();
+    }
+    proj._animId = requestAnimationFrame(step);
+  }
+
+  function destroy() {
+    alive = false;
+    scene.remove(proj);
+    proj.geometry.dispose();
+    proj.material.dispose();
+    try { onDestroy && onDestroy(); } catch {}
+  }
+
+  proj._animId = requestAnimationFrame(step);
+  return { destroy };
+}
