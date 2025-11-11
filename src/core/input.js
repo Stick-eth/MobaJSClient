@@ -1,18 +1,23 @@
 import * as THREE from 'three'; 
 import { renderer, camera } from '../world/scene.js';
 import { terrainMesh } from '../world/terrain.js';
-import { setPath, character, moveToAttackTarget, attackTarget, isDead } from '../player/character.js';
+import { setPath, character, moveToAttackTarget, attackTarget, isDead, isGameActive, areControlsEnabled, getAttackRange } from '../player/character.js';
 import { isWalkable } from '../world/collision.js';
 import { showMarker } from '../ui/marker.js';
 import { findPath, hasLineOfSight } from '../player/pathfinding.js';
 import { remotePlayers } from '../network/remotePlayers.js';
 import { socket } from '../network/socket.js';
+import { onClassChange } from '../player/classes.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
 
+const AUTOATTACK_RETRY_MS = 120;
+
 let lastAutoAttackTime = 0;
-const AUTOATTACK_COOLDOWN = 650; // en ms
+let autoAttackCooldownMs = 650; // en ms, dépend de la classe
+let pendingAutoAttack = false;
+let lastAutoAttackAttempt = 0;
 
 let hoveredEnemy = null;
 let currentAttackTarget = null;
@@ -22,7 +27,7 @@ let autoAttackInterval = null;
 // -- Survol souris sur joueurs ennemis --
 function updateHoverEnemy() {
   raycaster.setFromCamera(mouse, camera);
-  const meshes = Object.values(remotePlayers);
+  const meshes = Object.values(remotePlayers).filter(mesh => mesh.visible);
 
   const hits = raycaster.intersectObjects(meshes);
   if (hits.length > 0) {
@@ -50,6 +55,7 @@ function stopAttacking() {
   currentAttackTarget = null;
   if (autoAttackInterval) clearInterval(autoAttackInterval);
   autoAttackInterval = null;
+  pendingAutoAttack = false;
   if (attackTarget) {
     moveToAttackTarget(null);
   }
@@ -72,7 +78,7 @@ export function initInput() {
   const canvas = renderer.domElement;
 
   canvas.addEventListener('mousedown', e => {
-    if (isDead) {
+    if (isDead || !isGameActive || !areControlsEnabled()) {
       e.preventDefault();
       return;
     }
@@ -132,6 +138,10 @@ export function initInput() {
 
 // Appelé à chaque frame depuis main.js pour gérer hover en temps réel
 export function updateInput(delta = 1/60) {
+  if (!isGameActive || !areControlsEnabled()) {
+    if (currentAttackTarget) stopAttacking();
+    return;
+  }
   if (isDead) {
     if (currentAttackTarget) stopAttacking();
     return;
@@ -142,8 +152,18 @@ export function updateInput(delta = 1/60) {
   if (currentAttackTarget) {
     const dist = character.position.distanceTo(currentAttackTarget.position);
     const now = Date.now();
-    if (dist <= 6 && (now - lastAutoAttackTime) >= AUTOATTACK_COOLDOWN) {
+    if (pendingAutoAttack && (now - lastAutoAttackAttempt) >= AUTOATTACK_RETRY_MS) {
+      pendingAutoAttack = false;
+    }
+    const aaRange = getAttackRange();
+    if (
+      dist <= aaRange + 0.05 &&
+      !pendingAutoAttack &&
+      (now - lastAutoAttackTime) >= autoAttackCooldownMs
+    ) {
       // Peut attaquer
+      pendingAutoAttack = true;
+      lastAutoAttackAttempt = now;
       socket.emit("autoattack", {
         targetId: currentAttackTarget.userData.id,
         from: socket.id,
@@ -153,8 +173,34 @@ export function updateInput(delta = 1/60) {
           z: character.position.z,
         }
       });
-      lastAutoAttackTime = now;
     }
   }
 }
+
+export function resetAutoAttackCooldown() {
+  lastAutoAttackTime = Date.now() - autoAttackCooldownMs;
+  pendingAutoAttack = false;
+}
+
+onClassChange((definition) => {
+  const cooldown = definition?.stats?.autoAttack?.cooldownMs;
+  if (typeof cooldown === 'number') {
+    autoAttackCooldownMs = cooldown;
+  }
+  lastAutoAttackTime = Date.now() - autoAttackCooldownMs;
+  pendingAutoAttack = false;
+});
+
+window.addEventListener('autoattackConfirmed', () => {
+  pendingAutoAttack = false;
+  lastAutoAttackTime = Date.now();
+});
+
+window.addEventListener('enemyDied', (event) => {
+  const { id } = event.detail || {};
+  if (!id) return;
+  if (currentAttackTarget && currentAttackTarget.userData?.id === id) {
+    stopAttacking();
+  }
+});
 

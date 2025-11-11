@@ -52,4 +52,14 @@ export function initScene() {
   // Positionne la caméra et oriente-la vers l'origine
   camera.position.copy(cameraOffset);
   camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+  window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  camera.aspect = width / Math.max(1, height);
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height);
 }

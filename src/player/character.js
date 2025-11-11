@@ -2,21 +2,30 @@ import * as THREE from 'three';
 import { isWalkable } from '../world/collision.js';
 import { socket } from "../network/socket.js";
 import { findPath,hasLineOfSight } from './pathfinding.js'; // ← à ne pas oublier !
+import { onClassChange } from './classes.js';
 
 export let attackTarget = null;
-export let attackRange = 4; // portée d’attaque
+let attackRange = 4; // portée d’attaque
 
 let lastAttackTargetPos = null;
+export let isGameActive = false;
+let controlsEnabled = false;
 
 export function moveToAttackTarget(targetMesh) {
+  if (!controlsEnabled) return;
   attackTarget = targetMesh;
   // A chaque updateCharacter, on va se rapprocher automatiquement
+}
+
+export function getAttackRange() {
+  return attackRange;
 }
 
 export const character = new THREE.Mesh(
   new THREE.SphereGeometry(0.5, 32, 32),
   new THREE.MeshStandardMaterial({ color: 0x2194ce })
 );
+character.userData.moveSpeed = 4.5;
 
 // position initiale
 character.position.set(0, 0.5, 0);
@@ -25,10 +34,36 @@ export let isDead = false;
 
 export function setDeadState(value) {
   isDead = value;
+  if (value) {
+    setControlsEnabled(false);
+  }
+}
+
+export function setGameActive(value) {
+  isGameActive = value;
+  if (!value) {
+    controlsEnabled = false;
+    attackTarget = null;
+    setPath([]);
+    lastAttackTargetPos = null;
+  }
+}
+
+export function setControlsEnabled(value) {
+  controlsEnabled = value && isGameActive && !isDead;
+  if (!controlsEnabled) {
+    attackTarget = null;
+    setPath([]);
+    lastAttackTargetPos = null;
+  }
+}
+
+export function areControlsEnabled() {
+  return controlsEnabled;
 }
 
 let path = [];
-const speed = 9; // unités/seconde (3)
+let moveSpeed = 4.5; // unités/seconde (3) après ajustement serveur
 
 export function initCharacter(scene) {
   scene.add(character);
@@ -39,7 +74,7 @@ export function setPath(newPath) {
 }
 
 export function updateCharacter(delta) {
-  if (isDead) return;
+  if (!isGameActive || !controlsEnabled || isDead) return;
   if (attackTarget) {
     const targetPos = attackTarget.position.clone();
     targetPos.y = character.position.y;
@@ -81,7 +116,7 @@ export function updateCharacter(delta) {
 
   if (dist > 0.1) {
     dir.normalize();
-    const step = Math.min(speed * delta, dist);
+    const step = Math.min(moveSpeed * delta, dist);
     character.position.addScaledVector(dir, step);
     // orientation
     const q = new THREE.Quaternion().setFromUnitVectors(
@@ -138,7 +173,8 @@ function positionsAreEqual(a, b, epsilon = 0.001) {
 }
 
 function maybeSendPosition() {
-  if (isDead) return;
+  if (!isGameActive || !controlsEnabled || isDead) return;
+  if (!socket.connected) return;
   const current = new THREE.Vector2(character.position.x, character.position.z);
   if (!positionsAreEqual(current, lastSentPosition)) {
     socket.emit('playerPosition', {
@@ -152,3 +188,17 @@ function maybeSendPosition() {
 
 const tickrate = 1/20; // 20 updates par seconde
 setInterval(maybeSendPosition, tickrate * 1000);
+
+onClassChange((definition) => {
+  const range = definition?.stats?.autoAttack?.range;
+  if (typeof range === 'number') {
+    attackRange = range;
+  }
+});
+
+export function setMoveSpeed(value) {
+  if (typeof value === 'number' && !Number.isNaN(value) && value > 0) {
+    moveSpeed = value;
+    character.userData.moveSpeed = moveSpeed;
+  }
+}

@@ -1,67 +1,152 @@
 import { initScene, scene, renderer, camera } from './world/scene.js';
-import { initCharacter, updateCharacter, checkCharacterPosition } from './player/character.js';
+import { character, initCharacter, updateCharacter, checkCharacterPosition, setGameActive, setControlsEnabled, setDeadState } from './player/character.js';
 import { initCameraControl, updateCamera } from './ui/cameraController.js';
 import { initInput, updateInput } from './core/input.js';
 import { initOverlay } from './ui/overlay.js';
-import { showMarker, updateMarker } from './ui/marker.js';
+import { updateMarker } from './ui/marker.js';
 import { initSpells, updateSpells } from './player/spells.js';
-import { socket } from "./network/socket.js";
-import { initHealthBars, updateHealthBars } from './ui/healthBars.js';
+import { socket, clearActiveProjectiles } from "./network/socket.js";
+import { initHealthBars, updateHealthBars, resetHealthBars } from './ui/healthBars.js';
+import { initMenus, showHomeMenu, hideHomeMenu, showPauseMenu, hidePauseMenu, isPauseMenuVisible } from './ui/menu.js';
+import { clearRemotePlayers } from './network/remotePlayers.js';
 
- 
-
- 
- socket.on("connect", () => {
-  console.log("Connecté au serveur Socket.IO !", socket.id);
-  });
-
- initScene();
- initCharacter(scene);
- initInput();
- initOverlay();
- initCameraControl(renderer.domElement);
- initSpells();
+initScene();
+initCharacter(scene);
+initInput();
+initOverlay();
+initCameraControl(renderer.domElement);
+initSpells();
 initHealthBars(camera, renderer.domElement);
+
+setGameActive(false);
+setControlsEnabled(false);
+setDeadState(false);
+character.visible = false;
 
 let lastTime = performance.now();
 let isHidden = false;
 let accumulatedHiddenTime = 0;
+let matchRunning = false;
+let gamePaused = false;
 
+initMenus({
+  onPlay: startGame,
+  onResume: resumeGame,
+  onQuit: returnToHome
+});
+
+function startGame() {
+  if (matchRunning) {
+    if (gamePaused) resumeGame();
+    return;
+  }
+  matchRunning = true;
+  gamePaused = false;
+  hideHomeMenu();
+  hidePauseMenu();
+  setDeadState(false);
+  setGameActive(true);
+  setControlsEnabled(true);
+  character.visible = true;
+  character.position.set(0, 0.5, 0);
+  if (!socket.connected) {
+    socket.connect();
+  }
+}
+
+function resumeGame() {
+  if (!matchRunning || !gamePaused) return;
+  gamePaused = false;
+  hidePauseMenu();
+  setControlsEnabled(true);
+}
+
+function pauseGame() {
+  if (!matchRunning || gamePaused) return;
+  gamePaused = true;
+  setControlsEnabled(false);
+  showPauseMenu();
+}
+
+function returnToHome() {
+  hidePauseMenu();
+  matchRunning = false;
+  gamePaused = false;
+  setGameActive(false);
+  setControlsEnabled(false);
+  setDeadState(false);
+  character.visible = false;
+  character.position.set(0, 0.5, 0);
+  clearActiveProjectiles();
+  clearRemotePlayers();
+  resetHealthBars();
+  window.dispatchEvent(new CustomEvent('hideDeathOverlay'));
+  if (socket.connected) {
+    socket.disconnect();
+  }
+  showHomeMenu();
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (!matchRunning) return;
+    if (isPauseMenuVisible()) {
+      resumeGame();
+    } else {
+      pauseGame();
+    }
+  }
+});
+
+window.addEventListener('playerRespawnedLocal', () => {
+  if (matchRunning && !gamePaused) {
+    setControlsEnabled(true);
+  }
+});
+
+// Main animation loop
 function animate(now = performance.now()) {
   const rawDelta = (now - lastTime) / 1000;
   lastTime = now;
-  // Clamp excessively large delta (tab hidden throttling) to avoid physics leaps
   const delta = Math.min(rawDelta, 0.05);
 
-  if (!isHidden) {
+  const shouldSimulate = matchRunning && !gamePaused && !isHidden;
+
+  if (shouldSimulate) {
     updateCharacter(delta);
     updateCamera(delta);
     updateMarker(delta);
     updateSpells(delta);
     checkCharacterPosition();
     updateInput();
-    renderer.render(scene, camera);
-  } else {
-    // When hidden, skip heavy updates; still render occasionally for state safety
+  } else if (!isHidden) {
+    updateCamera(delta);
+  }
+
+  if (isHidden) {
     accumulatedHiddenTime += rawDelta;
-    if (accumulatedHiddenTime >= 1.0) { // render once per second while hidden
+    if (accumulatedHiddenTime >= 1.0) {
       renderer.render(scene, camera);
       accumulatedHiddenTime = 0;
     }
+  } else {
+    renderer.render(scene, camera);
   }
+
   updateHealthBars();
   requestAnimationFrame(animate);
 }
 animate();
 
-// Visibility handling: pause intensive work and force resync on focus
+// Visibility handling
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     isHidden = true;
     accumulatedHiddenTime = 0;
   } else {
     isHidden = false;
-    // Force a position resend & request snapshot for fast resync
-    try { socket.emit('snapshotRequest'); } catch {}
+    if (socket.connected && matchRunning) {
+      socket.emit('snapshotRequest');
+    }
   }
 });

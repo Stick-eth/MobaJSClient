@@ -3,23 +3,43 @@ import * as THREE from 'three';
 import { scene, camera } from '../world/scene.js';
 import { character } from './character.js';
 import { socket } from '../network/socket.js';
-import { qSpellCast } from './projectiles.js';  
+import { qSpellCast } from './projectiles.js';
+import { onClassChange, getSelectedClassId } from './classes.js';
+import { resetAutoAttackCooldown } from '../core/input.js';
 
-// --- CONFIGURATION DES SORTS ---
-const SPELLS = [
-  { key: 'a', name: 'Q (Skillshot)', cooldown: 4, icon: null }, // Q Ezreal
-  { key: 'z', name: 'W', cooldown: 10, icon: null },
-  { key: 'e', name: 'E', cooldown: 8, icon: null },
-  { key: 'r', name: 'R', cooldown: 40, icon: null },
-  { key: 'd', name: 'Flash', cooldown: 6, icon: null },
-  { key: 'f', name: 'Summoner 2', cooldown: 12, icon: null },
-];
+const SPELL_ORDER = ['a', 'z', 'e', 'r', 'd', 'f'];
 
-// --- STATE ---
-const spellState = SPELLS.map(s => ({
-  cooldown: 0, // seconds left
-  lastCast: -Infinity,
-}));
+const CLASS_SPELLBOOK = {
+  marksman: {
+    a: {
+      displayName: 'Q (Tir mystique)',
+      cooldown: 4
+    }
+  },
+  melee: {
+    a: {
+      displayName: 'Q (Renforcement)',
+      cooldown: 6
+    }
+  }
+};
+
+const SUMMONER_SPELLS = {
+  d: {
+    displayName: 'Flash',
+    cooldown: 300,
+    cast: () => castFlash()
+  },
+  f: {
+    displayName: 'Summoner 2',
+    cooldown: 0,
+    cast: null
+  }
+};
+
+const spellState = new Map(); // key -> { remaining, duration }
+let activeSpellBook = CLASS_SPELLBOOK.marksman;
+let currentClassId = 'marksman';
 
 export let projectiles = []; // { mesh, direction, speed, timeLeft }
 
@@ -28,14 +48,12 @@ export function initSpells() {
 }
 
 export function updateSpells(delta) {
-  // Tick cooldowns
-  for (let i = 0; i < SPELLS.length; ++i) {
-    if (spellState[i].cooldown > 0) {
-      spellState[i].cooldown = Math.max(0, spellState[i].cooldown - delta);
+  spellState.forEach((state) => {
+    if (state.remaining > 0) {
+      state.remaining = Math.max(0, state.remaining - delta);
     }
-  }
+  });
 
-  // Move & remove projectiles
   for (let i = projectiles.length - 1; i >= 0; --i) {
     const p = projectiles[i];
     p.mesh.position.addScaledVector(p.direction, p.speed * delta);
@@ -47,66 +65,86 @@ export function updateSpells(delta) {
   }
 }
 
-// --- Overlay API ---
 export function getSpellsState() {
-  return SPELLS.map((spell, i) => ({
-    key: spell.key.toUpperCase(),
-    name: spell.name,
-    cooldown: spellState[i].cooldown,
-    ready: spellState[i].cooldown === 0
-  }));
+  return SPELL_ORDER.map((slot) => {
+    const classCfg = activeSpellBook[slot];
+    const summonerCfg = SUMMONER_SPELLS[slot];
+    const cfg = classCfg || summonerCfg;
+    if (!cfg) {
+      return {
+        key: slot.toUpperCase(),
+        name: '—',
+        cooldown: 0,
+        ready: false
+      };
+    }
+    const state = spellState.get(slot) || { remaining: 0 };
+    return {
+      key: slot.toUpperCase(),
+      name: cfg.displayName,
+      cooldown: state.remaining || 0,
+      ready: (state.remaining || 0) === 0
+    };
+  });
 }
 
-// --- GESTION DES SORTS ---
 function handleSpellKeydown(e) {
   const key = e.key.toLowerCase();
-  const idx = SPELLS.findIndex(s => s.key === key);
-  if (idx === -1) return;
+  const cfg = activeSpellBook[key] || SUMMONER_SPELLS[key];
+  if (!cfg) return;
 
-  // Si cooldown > 0 : on bloque
-  if (spellState[idx].cooldown > 0) return;
+  const state = spellState.get(key);
+  if (state && state.remaining > 0) return;
 
-  if (SPELLS[idx].key === 'a') {
-    castEzrealQ();
-    
-    spellState[idx].cooldown = SPELLS[idx].cooldown;
-    spellState[idx].lastCast = performance.now() / 1000;
+  let casted = false;
+  if (SUMMONER_SPELLS[key]) {
+    const caster = SUMMONER_SPELLS[key].cast;
+    casted = typeof caster === 'function' ? caster() : false;
+  } else {
+    casted = castSpellForClass(currentClassId, key);
   }
-  if (SPELLS[idx].key === 'd') {
-    castFlash();
-    spellState[idx].cooldown = SPELLS[idx].cooldown;
-    spellState[idx].lastCast = performance.now() / 1000;
+  if (casted) {
+    const duration = cfg.cooldown;
+    spellState.set(key, {
+      duration,
+      remaining: duration
+    });
   }
 }
 
-// --- SPELL Q (Ezreal) ---
-function castEzrealQ() {
-  // 1. Direction = curseur souris projeté sur le terrain horizontal
-  const dir = getCursorWorldDirection();
-  if (!dir) return;
+function castSpellForClass(classId, key) {
+  if (classId === 'marksman' && key === 'a') {
+    return castMarksmanQ();
+  }
+  if (classId === 'melee' && key === 'a') {
+    return castMeleeQ();
+  }
+  return false;
+}
 
-  // 2. Crée le projectile
+function castMarksmanQ() {
+  const dir = getCursorWorldDirection();
+  if (!dir) return false;
+
   const geom = new THREE.SphereGeometry(0.22, 12, 12);
-  const mat  = new THREE.MeshBasicMaterial({ color: 0x39c6ff });
+  const mat = new THREE.MeshBasicMaterial({ color: 0x39c6ff });
   const mesh = new THREE.Mesh(geom, mat);
 
   mesh.position.copy(character.position);
-  mesh.position.y += 0.3; // pour que ça ne touche pas le sol direct
+  mesh.position.y += 0.3;
 
-  // Ajoute à la scène
   scene.add(mesh);
 
-  // Stock pour update
   projectiles.push({
     mesh,
     direction: dir,
     speed: 25,
-    timeLeft: 0.3 // durée de vie en secondes
+    timeLeft: 0.3
   });
 
   socket.emit('spellCast', {
     spell: 'Q',
-    from: socket.id,
+    classId: 'marksman',
     pos: {
       x: character.position.x,
       y: character.position.y,
@@ -118,49 +156,99 @@ function castEzrealQ() {
       z: dir.z
     }
   });
+
+  return true;
 }
 
-// --- SPELL FLASH ---
+function castMeleeQ() {
+  resetAutoAttackCooldown();
+  socket.emit('spellCast', {
+    spell: 'Q',
+    classId: 'melee'
+  });
+  return true;
+}
+
+// placeholder for future spells like Flash
 function castFlash() {
   const dir = getCursorWorldDirection();
-  if (!dir) return;
+  if (!dir) return false;
+  const DIST = 3;
+  const origin = {
+    x: character.position.x,
+    y: character.position.y,
+    z: character.position.z
+  };
+  const target = {
+    x: origin.x + dir.x * DIST,
+    y: origin.y,
+    z: origin.z + dir.z * DIST
+  };
 
-  // 1. Calcule la destination (700 units LoL ≈ ~5-7 unités, à tester visuellement)
-  const DIST = 3; // adapte si besoin
-
-  // 2. Vérifie que le terrain est walkable (optionnel)
-  // -- Ajoute ton propre check de collision si tu veux interdire le flash dans le mur
-
-  // 3. Déplace instantanément le personnage
-  character.position.addScaledVector(dir, DIST);
+  socket.emit('spellCast', {
+    spell: 'flash',
+    origin,
+    target
+  });
+  return true;
 }
 
-// --- UTILS ---
-// Calcule la direction monde du curseur (du personnage vers le point visé)
 function getCursorWorldDirection() {
-  // On projette le curseur sur le plan XZ à hauteur du personnage
   const mouse = new THREE.Vector2();
-  // Utilise la dernière position souris connue (pour edge-case hors canvas)
   const lastEvent = window._lastMouseEvent;
   if (!lastEvent) return null;
-  mouse.x =  (lastEvent.clientX / window.innerWidth)  * 2 - 1;
+  mouse.x = (lastEvent.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(lastEvent.clientY / window.innerHeight) * 2 + 1;
 
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
 
-  // Plan horizontal à hauteur du personnage
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -character.position.y);
 
   const intersect = new THREE.Vector3();
   raycaster.ray.intersectPlane(plane, intersect);
   const dir = intersect.sub(character.position);
   if (dir.lengthSq() < 0.001) return null;
-  dir.y = 0; // reste dans le plan horizontal
+  dir.y = 0;
   dir.normalize();
   return dir;
 }
 
-// --- TRACK LA POSITION SOURIS ---
-// Pour toujours avoir la vraie direction au moment du cast
-window.addEventListener('mousemove', e => { window._lastMouseEvent = e; });
+window.addEventListener('mousemove', (e) => { window._lastMouseEvent = e; });
+
+function ensureSpellState(slot, cooldown) {
+  const current = spellState.get(slot);
+  if (current) {
+    current.duration = cooldown;
+    if (current.remaining > cooldown) {
+      current.remaining = cooldown;
+    }
+  } else {
+    spellState.set(slot, { duration: cooldown, remaining: 0 });
+  }
+}
+
+function syncSpellbook(classId) {
+  activeSpellBook = CLASS_SPELLBOOK[classId] || {};
+  SPELL_ORDER.forEach((slot) => {
+    const cfg = activeSpellBook[slot];
+    if (cfg) {
+      ensureSpellState(slot, cfg.cooldown);
+    } else if (SUMMONER_SPELLS[slot]) {
+      ensureSpellState(slot, SUMMONER_SPELLS[slot].cooldown);
+    } else {
+      spellState.delete(slot);
+    }
+  });
+}
+
+onClassChange(({ id }) => {
+  currentClassId = id;
+  syncSpellbook(id);
+});
+
+Object.entries(SUMMONER_SPELLS).forEach(([slot, data]) => {
+  ensureSpellState(slot, data.cooldown);
+});
+
+syncSpellbook(getSelectedClassId());

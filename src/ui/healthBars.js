@@ -4,7 +4,7 @@ let camera = null;
 let canvas = null;
 let container = null;
 
-const tracked = new Map(); // id -> { mesh, bar, fill, max, hp, visible }
+const tracked = new Map(); // id -> { mesh, wrapper, bar, fill, label, max, hp, visible }
 
 export function initHealthBars(activeCamera, rendererDomElement) {
   camera = activeCamera;
@@ -29,21 +29,31 @@ export function trackHealthBar(id, mesh, { color = '#c0392b', max = 100 } = {}) 
   }
   if (tracked.has(id)) return;
 
+  const wrapper = document.createElement('div');
+  wrapper.className = 'hp-bar-wrapper';
   const bar = document.createElement('div');
   bar.className = 'hp-bar';
   if (color === '#27ae60' || color === 'green') {
     bar.classList.add('hp-self');
   }
+  const label = document.createElement('span');
+  label.className = 'hp-bar-level';
+  label.textContent = 'Lv 1';
+  wrapper.appendChild(label);
+
   const fill = document.createElement('div');
   fill.className = 'hp-bar-fill';
   fill.style.backgroundColor = color;
   bar.appendChild(fill);
-  container.appendChild(bar);
+  wrapper.appendChild(bar);
+  container.appendChild(wrapper);
 
   tracked.set(id, {
     mesh,
+    wrapper,
     bar,
     fill,
+    label,
     max,
     hp: max,
     visible: true,
@@ -54,8 +64,8 @@ export function trackHealthBar(id, mesh, { color = '#c0392b', max = 100 } = {}) 
 export function untrackHealthBar(id) {
   const data = tracked.get(id);
   if (!data) return;
-  if (data.bar?.parentElement) {
-    data.bar.parentElement.removeChild(data.bar);
+  if (data.wrapper?.parentElement) {
+    data.wrapper.parentElement.removeChild(data.wrapper);
   }
   tracked.delete(id);
 }
@@ -74,11 +84,20 @@ export function setHealthBarValue(id, hp, max = undefined) {
   data.fill.style.width = `${percent * 100}%`;
 }
 
+export function setHealthBarLevel(id, level) {
+  const data = tracked.get(id);
+  if (!data || !data.label) return;
+  const displayLevel = typeof level === 'number' && level > 0 ? Math.floor(level) : 1;
+  data.label.textContent = `Lv ${displayLevel}`;
+}
+
 export function setHealthBarVisible(id, visible) {
   const data = tracked.get(id);
   if (!data) return;
   data.visible = visible;
-  data.bar.style.display = visible ? 'block' : 'none';
+  if (data.wrapper) {
+    data.wrapper.style.display = visible ? 'block' : 'none';
+  }
 }
 
 const projector = new THREE.Vector3();
@@ -89,11 +108,11 @@ export function updateHealthBars() {
   const height = canvas.clientHeight;
 
   tracked.forEach((data, id) => {
-    const { mesh, bar, visible } = data;
-    if (!mesh || !bar) return;
+    const { mesh, wrapper, visible } = data;
+    if (!mesh || !wrapper) return;
 
     if (!mesh.visible || !visible) {
-      bar.style.display = 'none';
+      wrapper.style.display = 'none';
       return;
     }
 
@@ -102,15 +121,15 @@ export function updateHealthBars() {
     projector.project(camera);
 
     if (projector.z > 1 || projector.z < -1) {
-      bar.style.display = 'none';
+      wrapper.style.display = 'none';
       return;
     }
 
     const x = (projector.x * 0.5 + 0.5) * width;
     const y = (-projector.y * 0.5 + 0.5) * height;
 
-    bar.style.display = 'block';
-    bar.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+    wrapper.style.display = 'block';
+    wrapper.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
   });
 }
 
