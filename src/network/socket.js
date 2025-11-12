@@ -6,6 +6,7 @@ import { character, setDeadState, setMoveSpeed } from '../player/character.js';
 import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel, setHealthBarColor } from '../ui/healthBars.js';
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
 import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
+import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, clearMinions as resetMinions } from '../world/minions.js';
 
 const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
 const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
@@ -146,6 +147,18 @@ socket.on("playerLeft", ({ id }) => {
   players = players.filter(p => p.id !== id);
   clearPlayerTeam(id);
   console.log("Joueur parti :", id);
+});
+
+socket.on('minionSnapshot', ({ minions } = {}) => {
+  handleMinionSnapshot(Array.isArray(minions) ? minions : []);
+});
+
+socket.on('minionsSpawned', ({ minions } = {}) => {
+  handleMinionsSpawned(Array.isArray(minions) ? minions : []);
+});
+
+socket.on('minionsUpdated', ({ minions } = {}) => {
+  handleMinionsUpdated(Array.isArray(minions) ? minions : []);
 });
 
 socket.on("playerPositionUpdate", (data) => {
@@ -443,6 +456,7 @@ socket.on('disconnect', () => {
   emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, leveledUp: false, levelsGained: 0 });
   resetTeams();
   character.userData.team = null;
+  resetMinions();
 });
 
 socket.on('playerClassChanged', ({ id, classId, hp, maxHp }) => {

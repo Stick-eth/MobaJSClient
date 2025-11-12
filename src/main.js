@@ -10,8 +10,10 @@ import { socket, clearActiveProjectiles } from "./network/socket.js";
 import { initHealthBars, updateHealthBars, resetHealthBars } from './ui/healthBars.js';
 import { initMenus, showHomeMenu, hideHomeMenu, showPauseMenu, hidePauseMenu, isPauseMenuVisible } from './ui/menu.js';
 import { clearRemotePlayers } from './network/remotePlayers.js';
+import { initMinions, updateMinions, clearMinions } from './world/minions.js';
 
 initScene();
+initMinions(scene);
 initCharacter(scene);
 initInput();
 initOverlay();
@@ -81,6 +83,7 @@ function returnToHome() {
   character.position.set(0, 0.5, 0);
   clearActiveProjectiles();
   clearRemotePlayers();
+  clearMinions();
   resetHealthBars();
   window.dispatchEvent(new CustomEvent('hideDeathOverlay'));
   if (socket.connected) {
@@ -124,6 +127,8 @@ function animate(now = performance.now()) {
   } else if (!isHidden) {
     updateCamera(delta);
   }
+
+  updateMinions(delta);
 
   if (isHidden) {
     accumulatedHiddenTime += rawDelta;

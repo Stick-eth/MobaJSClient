@@ -1,5 +1,5 @@
 // src/collision.js
-import heightmapSrc from '../assets/heightmap.png';
+import heightmapSrc from '../assets/base_map/heightmap.png';
 
 const img = new Image();
 img.src = heightmapSrc;

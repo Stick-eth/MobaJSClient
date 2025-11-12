@@ -9,13 +9,14 @@ export let terrainMesh = null;
 export async function initTerrain() {
   const loader = new THREE.TextureLoader();
 
-  const heightMapURL   = '/src/assets/heightmap.png';
-  const splatMapURL    = '/src/assets/splatmap.png';
-  const groundTexURL   = '/src/assets/ground.png';
-  const wallTexURL     = '/src/assets/wall.png';
-  const waterTexURL    = '/src/assets/water.png';
-  const blueTurretMapURL = '/src/assets/blueturretmap.png';
-  const redTurretMapURL  = '/src/assets/redturretmap.png';
+  const basePath = '/src/assets/base_map';
+  const heightMapURL   = `${basePath}/heightmap.png`;
+  const splatMapURL    = `${basePath}/splatmap.png`;
+  const groundTexURL   = `${basePath}/ground.png`;
+  const wallTexURL     = `${basePath}/wall.png`;
+  const waterTexURL    = `${basePath}/water.png`;
+  const blueTurretMapURL = `${basePath}/blue/turretmap.png`;
+  const redTurretMapURL  = `${basePath}/red/turretmap.png`;
 
   let heightMap;
   let splatMap;
