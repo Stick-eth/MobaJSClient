@@ -3,6 +3,7 @@ import { character, initCharacter, updateCharacter, checkCharacterPosition, setG
 import { initCameraControl, updateCamera } from './ui/cameraController.js';
 import { initInput, updateInput } from './core/input.js';
 import { initOverlay } from './ui/overlay.js';
+import { initPerformanceStats } from './ui/performanceStats.js';
 import { updateMarker } from './ui/marker.js';
 import { initSpells, updateSpells } from './player/spells.js';
 import { socket, clearActiveProjectiles } from "./network/socket.js";
@@ -17,6 +18,7 @@ initOverlay();
 initCameraControl(renderer.domElement);
 initSpells();
 initHealthBars(camera, renderer.domElement);
+const updatePerformanceStats = initPerformanceStats();
 
 setGameActive(false);
 setControlsEnabled(false);
@@ -131,6 +133,9 @@ function animate(now = performance.now()) {
     }
   } else {
     renderer.render(scene, camera);
+    if (updatePerformanceStats) {
+      updatePerformanceStats(rawDelta);
+    }
   }
 
   updateHealthBars();
