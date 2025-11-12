@@ -8,6 +8,7 @@ import { findPath, hasLineOfSight } from '../player/pathfinding.js';
 import { remotePlayers } from '../network/remotePlayers.js';
 import { socket } from '../network/socket.js';
 import { onClassChange } from '../player/classes.js';
+import { isEnemyTeam, getMyTeam } from '../core/teams.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
@@ -27,7 +28,7 @@ let autoAttackInterval = null;
 // -- Survol souris sur joueurs ennemis --
 function updateHoverEnemy() {
   raycaster.setFromCamera(mouse, camera);
-  const meshes = Object.values(remotePlayers).filter(mesh => mesh.visible);
+  const meshes = Object.values(remotePlayers).filter(mesh => mesh.visible && isEnemyMesh(mesh));
 
   const hits = raycaster.intersectObjects(meshes);
   if (hits.length > 0) {
@@ -45,6 +46,7 @@ function updateHoverEnemy() {
 
 // -- Attaque auto sur joueur ciblé (juste la poursuite, toujours pathfinding) --
 function startAttackingEnemy(enemyMesh) {
+  if (!isEnemyMesh(enemyMesh)) return;
   stopAttacking();
   currentAttackTarget = enemyMesh;
   moveToAttackTarget(enemyMesh);
@@ -88,7 +90,7 @@ export function initInput() {
       raycaster.setFromCamera(mouse, camera);
 
       // -- Clic sur un joueur ennemi --
-      const enemyMeshes = Object.values(remotePlayers);
+      const enemyMeshes = Object.values(remotePlayers).filter(mesh => isEnemyMesh(mesh));
       const hitEnemies = raycaster.intersectObjects(enemyMeshes);
       if (hitEnemies.length > 0) {
         const enemyMesh = hitEnemies[0].object;
@@ -148,6 +150,11 @@ export function updateInput(delta = 1/60) {
   }
   updateHoverEnemy();
 
+  if (currentAttackTarget && !isEnemyMesh(currentAttackTarget)) {
+    stopAttacking();
+    return;
+  }
+
   // -- Gestion autoattack (cooldown géré proprement) --
   if (currentAttackTarget) {
     const dist = character.position.distanceTo(currentAttackTarget.position);
@@ -175,6 +182,16 @@ export function updateInput(delta = 1/60) {
       });
     }
   }
+}
+
+function isEnemyMesh(mesh) {
+  if (!mesh) return false;
+  const team = mesh.userData?.team;
+  const myTeam = getMyTeam();
+  if (!team || !myTeam) {
+    return true;
+  }
+  return isEnemyTeam(team);
 }
 
 export function resetAutoAttackCooldown() {

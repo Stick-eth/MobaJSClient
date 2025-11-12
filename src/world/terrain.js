@@ -1,10 +1,12 @@
 // src/terrain.js
 import * as THREE from 'three';
 import { scene } from './scene.js';
+import { initTurrets } from './turrets.js';
+import { TEAM_BLUE, TEAM_RED } from '../core/teams.js';
 
 export let terrainMesh = null;
 
-export function initTerrain() {
+export async function initTerrain() {
   const loader = new THREE.TextureLoader();
 
   const heightMapURL   = '/src/assets/heightmap.png';
@@ -12,12 +14,45 @@ export function initTerrain() {
   const groundTexURL   = '/src/assets/ground.png';
   const wallTexURL     = '/src/assets/wall.png';
   const waterTexURL    = '/src/assets/water.png';
+  const blueTurretMapURL = '/src/assets/blueturretmap.png';
+  const redTurretMapURL  = '/src/assets/redturretmap.png';
 
-  const heightMap = loader.load(heightMapURL);
-  const splatMap  = loader.load(splatMapURL);
-  const groundTex = loader.load(groundTexURL);
-  const wallTex   = loader.load(wallTexURL);
-  const waterTex  = loader.load(waterTexURL);
+  let heightMap;
+  let splatMap;
+  let groundTex;
+  let wallTex;
+  let waterTex;
+
+  try {
+    [heightMap, splatMap, groundTex, wallTex, waterTex] = await Promise.all([
+      loader.loadAsync(heightMapURL),
+      loader.loadAsync(splatMapURL),
+      loader.loadAsync(groundTexURL),
+      loader.loadAsync(wallTexURL),
+      loader.loadAsync(waterTexURL),
+    ]);
+  } catch (error) {
+    console.error('Failed to load terrain textures:', error);
+    return;
+  }
+
+  const turretTextures = {};
+  const [blueTurretResult, redTurretResult] = await Promise.allSettled([
+    loader.loadAsync(blueTurretMapURL),
+    loader.loadAsync(redTurretMapURL)
+  ]);
+
+  if (blueTurretResult.status === 'fulfilled') {
+    turretTextures[TEAM_BLUE] = blueTurretResult.value;
+  } else if (blueTurretResult.reason) {
+    console.warn('Blue turret map could not be loaded:', blueTurretResult.reason);
+  }
+
+  if (redTurretResult.status === 'fulfilled') {
+    turretTextures[TEAM_RED] = redTurretResult.value;
+  } else if (redTurretResult.reason) {
+    console.warn('Red turret map could not be loaded:', redTurretResult.reason);
+  }
 
   [groundTex, wallTex, waterTex].forEach(tex => {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -97,4 +132,18 @@ export function initTerrain() {
   terrainMesh.receiveShadow = true;
   terrainMesh.position.y = 0; 
   scene.add(terrainMesh);
+
+  if (Object.keys(turretTextures).length > 0) {
+    try {
+      initTurrets({
+        scene,
+        turretTextures,
+        heightTexture: heightMap,
+        displacementScale,
+        terrainSize: size,
+      });
+    } catch (error) {
+      console.error('Failed to initialize turrets:', error);
+    }
+  }
 }

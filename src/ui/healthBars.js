@@ -61,6 +61,13 @@ export function trackHealthBar(id, mesh, { color = '#c0392b', max = 100 } = {}) 
   });
 }
 
+export function setHealthBarColor(id, color) {
+  const data = tracked.get(id);
+  if (!data || !data.fill || typeof color !== 'string') return;
+  data.color = color;
+  data.fill.style.backgroundColor = color;
+}
+
 export function untrackHealthBar(id) {
   const data = tracked.get(id);
   if (!data) return;

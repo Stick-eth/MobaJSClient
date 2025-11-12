@@ -1,10 +1,11 @@
 import { io } from "socket.io-client";
-import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer, updateRemotePlayerClass } from "./remotePlayers.js";
+import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer, updateRemotePlayerClass, updateRemotePlayerTeam } from "./remotePlayers.js";
 import { remotePlayers } from './remotePlayers.js';
 import { qSpellCast, launchLinearProjectile, launchHomingProjectile } from '../player/projectiles.js';
 import { character, setDeadState, setMoveSpeed } from '../player/character.js';
-import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel } from '../ui/healthBars.js';
+import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel, setHealthBarColor } from '../ui/healthBars.js';
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
+import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
 
 const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
 const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
@@ -67,14 +68,27 @@ socket.on("connect", () => {
   socket.emit('selectClass', { classId: selectedClassId });
 });
 
-socket.on("playersList", (serverPlayers) => {
+socket.on("playersList", (serverPlayers = []) => {
+  const selfEntry = serverPlayers.find(p => p.id === socket.id);
+  if (selfEntry?.team) {
+    const team = setMyTeam(selfEntry.team);
+    character.userData.team = team;
+    if (character.material?.color) {
+      character.material.color.setHex(getTeamMeshColor(team));
+    }
+    setHealthBarColor(socket.id, getHealthBarColorForTeam(team));
+  }
+
   players = serverPlayers
     .filter(p => p.id !== socket.id)
-    .map(p => ({ ...p }));
-  // Pour chaque joueur reçu à la connexion, on ajoute son mesh
+    .map(p => {
+      const normalizedTeam = setPlayerTeam(p.id, p.team);
+      return { ...p, team: normalizedTeam };
+    });
+
   players.forEach(p => {
     const maxHp = p.maxHp ?? 100;
-    addRemotePlayer(p.id, p.x, p.z, p.hp ?? maxHp, maxHp, p.classId);
+    addRemotePlayer(p.id, p.x, p.z, p.hp ?? maxHp, maxHp, p.classId, p.team);
     setHealthBarValue(p.id, p.hp ?? maxHp, maxHp);
     setHealthBarVisible(p.id, !p.dead);
     setHealthBarLevel(p.id, p.level ?? 1);
@@ -85,13 +99,15 @@ socket.on("playersList", (serverPlayers) => {
       }
     }
   });
+
   console.log("Liste des autres joueurs :", players);
 });
 
 socket.on("playerJoined", (newPlayer) => {
   if (newPlayer.id !== socket.id) {
     const maxHp = newPlayer.maxHp ?? 100;
-    addRemotePlayer(newPlayer.id, newPlayer.x, newPlayer.z, newPlayer.hp ?? maxHp, maxHp, newPlayer.classId);
+    const normalizedTeam = setPlayerTeam(newPlayer.id, newPlayer.team);
+    addRemotePlayer(newPlayer.id, newPlayer.x, newPlayer.z, newPlayer.hp ?? maxHp, maxHp, newPlayer.classId, normalizedTeam);
     setHealthBarValue(newPlayer.id, newPlayer.hp ?? maxHp, maxHp);
     setHealthBarVisible(newPlayer.id, !newPlayer.dead);
     setHealthBarLevel(newPlayer.id, newPlayer.level ?? 1);
@@ -101,14 +117,34 @@ socket.on("playerJoined", (newPlayer) => {
         mesh.userData.moveSpeed = newPlayer.moveSpeed;
       }
     }
-    players.push({ ...newPlayer });
+    players.push({ ...newPlayer, team: normalizedTeam });
     console.log("Nouveau joueur :", newPlayer);
+  }
+});
+
+socket.on('teamAssignment', ({ id, team }) => {
+  if (!id || !team) return;
+  if (id === socket.id) {
+    const normalized = setMyTeam(team);
+    character.userData.team = normalized;
+    if (character.material?.color) {
+      character.material.color.setHex(getTeamMeshColor(normalized));
+    }
+    const barColor = getHealthBarColorForTeam(normalized);
+    setHealthBarColor(id, barColor);
+  } else {
+    updateRemotePlayerTeam(id, team);
+    const target = players.find(p => p.id === id);
+    if (target) {
+      target.team = getPlayerTeam(id);
+    }
   }
 });
 
 socket.on("playerLeft", ({ id }) => {
   removeRemotePlayer(id);
   players = players.filter(p => p.id !== id);
+  clearPlayerTeam(id);
   console.log("Joueur parti :", id);
 });
 
@@ -123,7 +159,7 @@ socket.on('playersSnapshot', (snapshot) => {
   snapshot.forEach(p => {
     if (p.id === socket.id) return; // ignore self; local is source of truth for own position until corrections implemented
     const maxHp = p.maxHp ?? 100;
-    updateRemotePlayer(p.id, p.x, p.z, { hp: p.hp, maxHp, classId: p.classId });
+    updateRemotePlayer(p.id, p.x, p.z, { hp: p.hp, maxHp, classId: p.classId, team: p.team });
     setHealthBarValue(p.id, p.hp ?? maxHp, maxHp);
     setHealthBarVisible(p.id, !p.dead);
     const target = players.find(pl => pl.id === p.id);
@@ -134,6 +170,7 @@ socket.on('playersSnapshot', (snapshot) => {
       target.dead = p.dead;
       target.maxHp = maxHp;
       target.classId = p.classId ?? target.classId;
+      if (p.team) target.team = p.team;
       if (typeof p.level === 'number') target.level = p.level;
       if (typeof p.xp === 'number') target.xp = p.xp;
       if (typeof p.xpToNext === 'number') target.xpToNext = p.xpToNext;
@@ -143,6 +180,12 @@ socket.on('playersSnapshot', (snapshot) => {
         if (mesh) {
           mesh.userData.moveSpeed = p.moveSpeed;
         }
+      }
+    }
+    if (p.team) {
+      const normalizedTeam = updateRemotePlayerTeam(p.id, p.team);
+      if (target && normalizedTeam) {
+        target.team = normalizedTeam;
       }
     }
     if (p.classId) {
@@ -210,13 +253,21 @@ socket.on('playerDied', ({ id, by, source }) => {
   }
 });
 
-socket.on('playerRespawned', ({ id, x, z, hp, maxHp, classId }) => {
+socket.on('playerRespawned', ({ id, x, z, hp, maxHp, classId, team }) => {
   if (id === socket.id) {
     character.position.set(x, character.position.y, z);
     character.visible = true;
     setDeadState(false);
     if (classId) {
       setSelectedClassId(classId, { source: 'server', force: true });
+    }
+    if (team) {
+      const normalized = setMyTeam(team);
+      character.userData.team = normalized;
+      if (character.material?.color) {
+        character.material.color.setHex(getTeamMeshColor(normalized));
+      }
+      setHealthBarColor(id, getHealthBarColorForTeam(normalized));
     }
     const effectiveMax = maxHp ?? (getSelectedClassDefinition()?.stats?.maxHp ?? 100);
     setHealthBarValue(id, hp ?? effectiveMax, effectiveMax);
@@ -231,6 +282,11 @@ socket.on('playerRespawned', ({ id, x, z, hp, maxHp, classId }) => {
       mesh.position.set(x, 0.5, z);
       mesh.visible = true;
     }
+    let normalizedTeam = null;
+    if (team) {
+      normalizedTeam = setPlayerTeam(id, team);
+      updateRemotePlayerTeam(id, normalizedTeam);
+    }
     const target = players.find(p => p.id === id);
     if (target) {
       target.x = x;
@@ -239,6 +295,7 @@ socket.on('playerRespawned', ({ id, x, z, hp, maxHp, classId }) => {
       target.hp = hp ?? (target.maxHp ?? 100);
       target.maxHp = maxHp ?? target.maxHp;
       target.classId = classId ?? target.classId;
+      if (normalizedTeam) target.team = normalizedTeam;
     }
     if (classId) {
       updateRemotePlayerClass(id, classId);
@@ -384,6 +441,8 @@ socket.on('disconnect', () => {
   emitLocalHealth(0, 0);
   localProgress = { level: 1, xp: 0, xpToNext: 200 };
   emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, leveledUp: false, levelsGained: 0 });
+  resetTeams();
+  character.userData.team = null;
 });
 
 socket.on('playerClassChanged', ({ id, classId, hp, maxHp }) => {

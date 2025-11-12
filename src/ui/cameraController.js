@@ -6,6 +6,8 @@ import { character } from '../player/character.js';
 let locked      = true;
 let isPanning   = false;
 let spaceHeld   = false;
+let firstPerson = false;
+let lockBeforeFirstPerson = true;
 
 // Origine du “drag virtuel”
 const panStart   = new THREE.Vector2();
@@ -27,6 +29,12 @@ const ZOOM_SPEED   = 0.01;
 const EDGE_SPEED   = 25;
 const EDGE_MARGIN  = 50; 
 
+const FIRST_PERSON_HEAD_OFFSET = new THREE.Vector3(0, 1.45, 0);
+const FIRST_PERSON_FORWARD_OFFSET = 0.35;
+const TRANSITION_DURATION = 450; // ms
+
+let cameraTransition = null;
+
 export function initCameraControl(domElement) {
   const canvas = domElement;
 
@@ -40,6 +48,9 @@ export function initCameraControl(domElement) {
       // recentrage immédiat
       camera.position.copy(character.position).add(cameraOffset);
       camera.lookAt(character.position);
+    }
+    if (e.key.toLowerCase() === 'o') {
+      toggleFirstPersonView();
     }
   });
 
@@ -101,6 +112,15 @@ export function updateCamera(delta) {
   const x = lastMouse.x;
   const y = lastMouse.y;
 
+  if (updateCameraTransition()) {
+    return;
+  }
+
+  if (firstPerson) {
+    applyFirstPersonPose();
+    return;
+  }
+
   // --- Locked ou Space : suivi strict, on oriente vers le perso ---
   if (locked || spaceHeld) {
     const offsetNorm = cameraOffset.clone().normalize();
@@ -137,15 +157,111 @@ export function updateCamera(delta) {
 }
 
 export function toggleLock() {
-  locked = !locked;
+  setLockState(!locked);
+}
+
+export function isCameraLocked() {
+  return locked;
+}
+
+function toggleFirstPersonView() {
+  if (cameraTransition) return;
+  const targetMode = firstPerson ? 'third' : 'first';
+  const fromPos = camera.position.clone();
+  const fromQuat = camera.quaternion.clone();
+  const targetPose = targetMode === 'first'
+    ? computeFirstPersonPose()
+    : computeThirdPersonPose();
+
+  if (targetMode === 'first') {
+    lockBeforeFirstPerson = locked;
+    setLockState(true);
+    spaceHeld = false;
+    isPanning = false;
+  } else {
+    setLockState(lockBeforeFirstPerson);
+  }
+
+  cameraTransition = {
+    targetMode,
+    start: performance.now(),
+    duration: TRANSITION_DURATION,
+    fromPos,
+    fromQuat,
+    toPos: targetPose.position,
+    toQuat: targetPose.quaternion
+  };
+}
+
+function updateCameraTransition() {
+  if (!cameraTransition) return false;
+  const now = performance.now();
+  const elapsed = now - cameraTransition.start;
+  const t = Math.min(1, elapsed / cameraTransition.duration);
+  const eased = easeInOutCubic(t);
+
+  camera.position.copy(cameraTransition.fromPos).lerp(cameraTransition.toPos, eased);
+  const slerpedQuat = cameraTransition.fromQuat.clone().slerp(cameraTransition.toQuat, eased);
+  camera.quaternion.copy(slerpedQuat);
+
+  if (t >= 1) {
+    const targetMode = cameraTransition.targetMode;
+    cameraTransition = null;
+    firstPerson = targetMode === 'first';
+    if (firstPerson) {
+      applyFirstPersonPose();
+    } else {
+      applyThirdPersonPose();
+    }
+  }
+  return true;
+}
+
+function computeFirstPersonPose() {
+  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(character.quaternion);
+  const origin = character.position.clone().add(FIRST_PERSON_HEAD_OFFSET);
+  const position = origin.clone().addScaledVector(forward, FIRST_PERSON_FORWARD_OFFSET);
+  const lookAtTarget = origin.clone().addScaledVector(forward, 4);
+  const quaternion = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().lookAt(position, lookAtTarget, new THREE.Vector3(0, 1, 0))
+  );
+  return { position, quaternion };
+}
+
+function computeThirdPersonPose() {
+  const offsetNorm = cameraOffset.clone().normalize();
+  const position = character.position.clone().addScaledVector(offsetNorm, zoomDistance);
+  const lookAtTarget = character.position.clone();
+  const quaternion = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().lookAt(position, lookAtTarget, new THREE.Vector3(0, 1, 0))
+  );
+  return { position, quaternion };
+}
+
+function applyFirstPersonPose() {
+  const pose = computeFirstPersonPose();
+  camera.position.copy(pose.position);
+  camera.quaternion.copy(pose.quaternion);
+}
+
+function applyThirdPersonPose() {
+  const pose = computeThirdPersonPose();
+  camera.position.copy(pose.position);
+  camera.quaternion.copy(pose.quaternion);
+  storedQuat.copy(camera.quaternion);
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function setLockState(value) {
+  if (locked === value) return;
+  locked = value;
   if (!locked) {
     storedQuat.copy(camera.quaternion);
   }
   document.dispatchEvent(new CustomEvent('cameraLockChanged', {
     detail: { locked }
   }));
-}
-
-export function isCameraLocked() {
-  return locked;
 }
