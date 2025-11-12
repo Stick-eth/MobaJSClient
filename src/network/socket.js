@@ -6,13 +6,33 @@ import { character, setDeadState, setMoveSpeed } from '../player/character.js';
 import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel, setHealthBarColor } from '../ui/healthBars.js';
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
 import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
-import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, clearMinions as resetMinions } from '../world/minions.js';
+import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions } from '../world/minions.js';
 
 const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
 const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
 const defaultHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 const defaultUrl = `${defaultProtocol}//${defaultHost}:3000`;
 const serverUrl = envUrl || defaultUrl;
+const SNAPSHOT_REQUEST_COOLDOWN_MS = 1000;
+
+let lastMinionSnapshotRequest = 0;
+
+function safeNowMs() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function requestMinionSnapshot() {
+  if (!socket.connected) return;
+  const now = safeNowMs();
+  if (now - lastMinionSnapshotRequest < SNAPSHOT_REQUEST_COOLDOWN_MS) {
+    return;
+  }
+  lastMinionSnapshotRequest = now;
+  socket.emit('requestMinionSnapshot');
+}
 
 export const socket = io(serverUrl, {
   autoConnect: false
@@ -56,6 +76,7 @@ export function clearActiveProjectiles() {
 
 socket.on("connect", () => {
   myId = socket.id;
+  lastMinionSnapshotRequest = 0;
   const classDef = getSelectedClassDefinition();
   const maxHp = classDef?.stats?.maxHp ?? 100;
   trackHealthBar(myId, character, { color: '#27ae60', max: maxHp });
@@ -159,6 +180,14 @@ socket.on('minionsSpawned', ({ minions } = {}) => {
 
 socket.on('minionsUpdated', ({ minions } = {}) => {
   handleMinionsUpdated(Array.isArray(minions) ? minions : []);
+});
+
+socket.on('minionsRemoved', ({ ids } = {}) => {
+  handleMinionsRemoved(Array.isArray(ids) ? ids : []);
+});
+
+socket.on('minionProjectile', (payload = {}) => {
+  handleMinionProjectile(payload);
 });
 
 socket.on("playerPositionUpdate", (data) => {
@@ -458,6 +487,20 @@ socket.on('disconnect', () => {
   character.userData.team = null;
   resetMinions();
 });
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      requestMinionSnapshot();
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', () => {
+    requestMinionSnapshot();
+  });
+}
 
 socket.on('playerClassChanged', ({ id, classId, hp, maxHp }) => {
   if (!classId) return;
