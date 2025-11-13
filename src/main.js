@@ -12,6 +12,7 @@ import { initDevOverlay, toggleDevOverlay, setDevOverlayEnabled, updateDevOverla
 import { initMenus, showHomeMenu, hideHomeMenu, showPauseMenu, hidePauseMenu, isPauseMenuVisible } from './ui/menu.js';
 import { clearRemotePlayers } from './network/remotePlayers.js';
 import { initMinions, updateMinions, clearMinions } from './world/minions.js';
+import { updateTurrets } from './world/turrets.js';
 import { isLowSpecDevice } from './core/performance.js';
 
 initScene();
@@ -168,6 +169,8 @@ function animate(now = performance.now()) {
   } else {
     updateMinions(delta);
   }
+
+  updateTurrets(delta);
 
   if (isHidden) {
     accumulatedHiddenTime += rawDelta;

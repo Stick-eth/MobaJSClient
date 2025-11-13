@@ -31,6 +31,7 @@ export function addRemotePlayer(id, x, z, hp = 100, maxHp = 100, classId = 'mark
   scene.add(mesh);
   remotePlayers[id] = mesh;
   mesh.userData.id = id; // stocke l'ID pour référence
+  mesh.userData.type = 'player';
   mesh.userData.classId = classId;
   mesh.userData.moveSpeed = 4.5;
 

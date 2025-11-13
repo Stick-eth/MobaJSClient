@@ -4,16 +4,25 @@ export const CLASS_DEFINITIONS = {
     label: 'Tireur',
     description: 'Attaques à distance avec un tir mystique pour le Q.',
     stats: {
-      maxHp: 100,
+      maxHp: 1200,
       moveSpeed: 4.5,
       autoAttack: {
         type: 'ranged',
-        damage: 5,
+        damage: 55,
         range: 4,
         cooldownMs: 650,
         projectileSpeed: 14,
         projectileRadius: 0.6,
         projectileTtl: 2.0
+      }
+    },
+    spells: {
+      Q: {
+        type: 'projectile',
+        damage: 140,
+        projectileSpeed: 25,
+        projectileRadius: 0.6,
+        projectileTtl: 0.3
       }
     }
   },
@@ -22,16 +31,22 @@ export const CLASS_DEFINITIONS = {
     label: 'Mêlée',
     description: 'Combattant au corps à corps avec un buff de dégâts sur le Q.',
     stats: {
-      maxHp: 150,
+      maxHp: 1200,
       moveSpeed: 4.5,
       autoAttack: {
         type: 'melee',
-        damage: 10,
-        range: 2.0,
+        damage: 85,
+        range: 1.0,
         cooldownMs: 1000,
         projectileSpeed: 0,
         projectileRadius: 1.0,
         projectileTtl: 0
+      }
+    },
+    spells: {
+      Q: {
+        type: 'empower',
+        bonusDamage: 160
       }
     }
   }

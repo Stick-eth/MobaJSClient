@@ -9,6 +9,7 @@ import { remotePlayers } from '../network/remotePlayers.js';
 import { socket } from '../network/socket.js';
 import { onClassChange } from '../player/classes.js';
 import { isEnemyTeam, getMyTeam } from '../core/teams.js';
+import { getMinionMeshes } from '../world/minions.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
@@ -26,30 +27,126 @@ let autoAttackInterval = null;
 
 
 // -- Survol souris sur joueurs ennemis --
-function updateHoverEnemy() {
-  raycaster.setFromCamera(mouse, camera);
-  const meshes = Object.values(remotePlayers).filter(mesh => mesh.visible && isEnemyMesh(mesh));
+function resolveTargetableMesh(object) {
+  let node = object;
+  while (node) {
+    const hasId = node.userData && node.userData.id !== undefined && node.userData.id !== null;
+    const hasType = typeof node.userData?.type === 'string';
+    const hasUnitType = typeof node.userData?.unitType === 'string';
+    if (hasId && (hasType || hasUnitType)) {
+      return node;
+    }
+    node = node.parent;
+  }
+  return null;
+}
 
-  const hits = raycaster.intersectObjects(meshes);
-  if (hits.length > 0) {
-    const mesh = hits[0].object;
-    if (hoveredEnemy !== mesh) {
-      if (hoveredEnemy) hoveredEnemy.material.emissive?.set(0x000000);
-      hoveredEnemy = mesh;
-      hoveredEnemy.material.emissive?.set(0xff2222); // rouge
+function getTargetType(mesh) {
+  if (!mesh?.userData) return 'player';
+  const { type, unitType } = mesh.userData;
+  if (type === 'minion' || unitType === 'minion') {
+    return 'minion';
+  }
+  if (type === 'player' || unitType === 'player') {
+    return 'player';
+  }
+  return 'player';
+}
+
+function setHoverHighlight(mesh, highlighted) {
+  if (!mesh) return;
+  if (highlighted) {
+    if (!mesh.userData.__hoverOriginalMaterial) {
+      mesh.userData.__hoverOriginalMaterial = mesh.material;
+    }
+    if (!mesh.userData.__hoverMaterial) {
+      const cloned = mesh.material?.clone ? mesh.material.clone() : null;
+      if (cloned) {
+        if (cloned.emissive) {
+          cloned.emissive.setHex(0xff2222);
+          cloned.emissiveIntensity = Math.max(cloned.emissiveIntensity ?? 0.65, 0.65);
+        } else if (cloned.color) {
+          cloned.color.setHex(0xff2222);
+        }
+        mesh.userData.__hoverMaterial = cloned;
+      }
+    }
+    if (mesh.userData.__hoverMaterial) {
+      mesh.material = mesh.userData.__hoverMaterial;
+    }
+
+    const indicator = mesh.userData?.indicator;
+    if (indicator) {
+      indicator.userData = indicator.userData || {};
+      if (!indicator.userData.__hoverOriginalMaterial) {
+        indicator.userData.__hoverOriginalMaterial = indicator.material;
+      }
+      if (!indicator.userData.__hoverMaterial) {
+        const indicatorClone = indicator.material?.clone ? indicator.material.clone() : null;
+        if (indicatorClone) {
+          if (indicatorClone.emissive) {
+            indicatorClone.emissive.setHex(0xff5555);
+            indicatorClone.emissiveIntensity = Math.max(indicatorClone.emissiveIntensity ?? 0.75, 0.75);
+          }
+          if (indicatorClone.color) {
+            indicatorClone.color.setHex(0xff5555);
+          }
+          indicator.userData.__hoverMaterial = indicatorClone;
+        }
+      }
+      if (indicator.userData.__hoverMaterial) {
+        indicator.material = indicator.userData.__hoverMaterial;
+      }
     }
   } else {
-    if (hoveredEnemy) hoveredEnemy.material.emissive?.set(0x000000);
+    if (mesh.userData.__hoverOriginalMaterial) {
+      mesh.material = mesh.userData.__hoverOriginalMaterial;
+    }
+    const indicator = mesh.userData?.indicator;
+    if (indicator?.userData?.__hoverOriginalMaterial) {
+      indicator.material = indicator.userData.__hoverOriginalMaterial;
+    }
+  }
+}
+
+function getTargetableEnemyMeshes() {
+  const players = Object.values(remotePlayers)
+    .filter(mesh => mesh && mesh.visible && isEnemyMesh(mesh));
+  const minions = getMinionMeshes()
+    .filter(mesh => mesh && mesh.visible && isEnemyMesh(mesh));
+  return [...players, ...minions];
+}
+
+function updateHoverEnemy() {
+  raycaster.setFromCamera(mouse, camera);
+  const meshes = getTargetableEnemyMeshes();
+
+  const hits = raycaster.intersectObjects(meshes, true);
+  if (hits.length > 0) {
+    const mesh = resolveTargetableMesh(hits[0].object);
+    if (mesh && hoveredEnemy !== mesh) {
+      if (hoveredEnemy) setHoverHighlight(hoveredEnemy, false);
+      hoveredEnemy = mesh;
+      setHoverHighlight(hoveredEnemy, true);
+    } else if (!mesh && hoveredEnemy) {
+      setHoverHighlight(hoveredEnemy, false);
+      hoveredEnemy = null;
+    }
+  } else if (hoveredEnemy) {
+    setHoverHighlight(hoveredEnemy, false);
     hoveredEnemy = null;
   }
 }
 
 // -- Attaque auto sur joueur ciblé (juste la poursuite, toujours pathfinding) --
 function startAttackingEnemy(enemyMesh) {
-  if (!isEnemyMesh(enemyMesh)) return;
+  const resolved = resolveTargetableMesh(enemyMesh);
+  if (!resolved || !isEnemyMesh(resolved)) {
+    return;
+  }
   stopAttacking();
-  currentAttackTarget = enemyMesh;
-  moveToAttackTarget(enemyMesh);
+  currentAttackTarget = resolved;
+  moveToAttackTarget(resolved);
 }
 
 
@@ -90,11 +187,13 @@ export function initInput() {
       raycaster.setFromCamera(mouse, camera);
 
       // -- Clic sur un joueur ennemi --
-      const enemyMeshes = Object.values(remotePlayers).filter(mesh => isEnemyMesh(mesh));
-      const hitEnemies = raycaster.intersectObjects(enemyMeshes);
+      const enemyMeshes = getTargetableEnemyMeshes();
+      const hitEnemies = raycaster.intersectObjects(enemyMeshes, true);
       if (hitEnemies.length > 0) {
-        const enemyMesh = hitEnemies[0].object;
-        startAttackingEnemy(enemyMesh);
+        const enemyMesh = resolveTargetableMesh(hitEnemies[0].object);
+        if (enemyMesh) {
+          startAttackingEnemy(enemyMesh);
+        }
         return; // On n'autorise pas déplacement sur clic joueur
       }
 
@@ -154,6 +253,10 @@ export function updateInput(delta = 1/60) {
     stopAttacking();
     return;
   }
+  if (currentAttackTarget && (!currentAttackTarget.visible || !currentAttackTarget.parent)) {
+    stopAttacking();
+    return;
+  }
 
   // -- Gestion autoattack (cooldown géré proprement) --
   if (currentAttackTarget) {
@@ -174,6 +277,7 @@ export function updateInput(delta = 1/60) {
       socket.emit("autoattack", {
         targetId: currentAttackTarget.userData.id,
         from: socket.id,
+        targetType: getTargetType(currentAttackTarget),
         pos: {
           x: character.position.x,
           y: character.position.y,

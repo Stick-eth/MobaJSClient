@@ -6,6 +6,9 @@ import { TEAM_BLUE, TEAM_RED } from '../core/teams.js';
 
 export let terrainMesh = null;
 
+const TURRET_LANES = [1, 2, 3];
+const TURRET_TIERS = [1, 2, 3];
+
 export async function initTerrain() {
   const loader = new THREE.TextureLoader();
 
@@ -15,8 +18,6 @@ export async function initTerrain() {
   const groundTexURL   = `${basePath}/ground.png`;
   const wallTexURL     = `${basePath}/wall.png`;
   const waterTexURL    = `${basePath}/water.png`;
-  const blueTurretMapURL = `${basePath}/blue/turretmap.png`;
-  const redTurretMapURL  = `${basePath}/red/turretmap.png`;
 
   let heightMap;
   let splatMap;
@@ -38,21 +39,20 @@ export async function initTerrain() {
   }
 
   const turretTextures = {};
-  const [blueTurretResult, redTurretResult] = await Promise.allSettled([
-    loader.loadAsync(blueTurretMapURL),
-    loader.loadAsync(redTurretMapURL)
-  ]);
+  try {
+    const [blueTurrets, redTurrets] = await Promise.all([
+      loadTurretMapsForTeam(loader, basePath, TEAM_BLUE),
+      loadTurretMapsForTeam(loader, basePath, TEAM_RED),
+    ]);
 
-  if (blueTurretResult.status === 'fulfilled') {
-    turretTextures[TEAM_BLUE] = blueTurretResult.value;
-  } else if (blueTurretResult.reason) {
-    console.warn('Blue turret map could not be loaded:', blueTurretResult.reason);
-  }
-
-  if (redTurretResult.status === 'fulfilled') {
-    turretTextures[TEAM_RED] = redTurretResult.value;
-  } else if (redTurretResult.reason) {
-    console.warn('Red turret map could not be loaded:', redTurretResult.reason);
+    if (blueTurrets.length) {
+      turretTextures[TEAM_BLUE] = blueTurrets;
+    }
+    if (redTurrets.length) {
+      turretTextures[TEAM_RED] = redTurrets;
+    }
+  } catch (error) {
+    console.error('Failed to load turret textures:', error);
   }
 
   [groundTex, wallTex, waterTex].forEach(tex => {
@@ -146,5 +146,74 @@ export async function initTerrain() {
     } catch (error) {
       console.error('Failed to initialize turrets:', error);
     }
+  }
+}
+
+async function loadTurretMapsForTeam(loader, basePath, team) {
+  const teamPath = `${basePath}/${team}`;
+  const descriptors = [];
+
+  TURRET_LANES.forEach(lane => {
+    TURRET_TIERS.forEach(tier => {
+      const id = `t_${lane}_${tier}`;
+      descriptors.push({
+        id,
+        lane,
+        tier,
+        url: `${teamPath}/turrets/${id}.png`,
+      });
+    });
+  });
+
+  const results = await Promise.allSettled(
+    descriptors.map(descriptor => loader.loadAsync(descriptor.url))
+  );
+
+  const loaded = [];
+  const missing = [];
+
+  results.forEach((result, index) => {
+    const descriptor = descriptors[index];
+    if (result.status === 'fulfilled') {
+      const texture = result.value;
+      texture.name = `${team}-turret-${descriptor.id}`;
+      loaded.push({
+        texture,
+        lane: descriptor.lane,
+        tier: descriptor.tier,
+        id: descriptor.id,
+        path: descriptor.url,
+      });
+    } else {
+      missing.push(descriptor.id);
+    }
+  });
+
+  if (loaded.length) {
+    if (missing.length) {
+      console.warn(`Missing turret markers for team ${team}: ${missing.join(', ')}`);
+    }
+    return loaded;
+  }
+
+  if (missing.length) {
+    console.warn(`No per-turret markers loaded for team ${team}, attempting legacy turretmap.png fallback.`);
+  }
+
+  const legacyUrl = `${teamPath}/turretmap.png`;
+  try {
+    const legacyTexture = await loader.loadAsync(legacyUrl);
+    legacyTexture.name = `${team}-turret-legacy`;
+    console.warn(`Using legacy turretmap.png for team ${team}.`);
+    return [{
+      texture: legacyTexture,
+      lane: null,
+      tier: null,
+      id: 'legacy',
+      path: legacyUrl,
+    }];
+  } catch (error) {
+    console.warn(`No turret map could be loaded for team ${team}.`, error);
+    return [];
   }
 }

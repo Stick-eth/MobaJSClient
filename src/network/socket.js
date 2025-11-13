@@ -6,7 +6,8 @@ import { character, setDeadState, setMoveSpeed } from '../player/character.js';
 import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel, setHealthBarColor } from '../ui/healthBars.js';
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
 import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
-import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions } from '../world/minions.js';
+import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions, getMinionMeshById } from '../world/minions.js';
+import { handleTurretAttack } from '../world/turrets.js';
 
 const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
 const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
@@ -32,6 +33,25 @@ function requestMinionSnapshot() {
   }
   lastMinionSnapshotRequest = now;
   socket.emit('requestMinionSnapshot');
+}
+
+function resolveTurretTargetMesh(payload = {}) {
+  const { targetType, targetId } = payload;
+  if (targetType === 'player') {
+    if (targetId === socket.id) {
+      return character;
+    }
+    return remotePlayers[targetId] || null;
+  }
+  if (targetType === 'minion') {
+    if (typeof targetId !== 'number') return null;
+    return getMinionMeshById(targetId);
+  }
+  return null;
+}
+
+function resolveAttackTargetMesh(targetType, targetId) {
+  return resolveTurretTargetMesh({ targetType, targetId });
 }
 
 export const socket = io(serverUrl, {
@@ -191,6 +211,11 @@ socket.on('minionProjectile', (payload = {}) => {
   handleMinionProjectile(payload);
 });
 
+socket.on('turretAttack', (payload = {}) => {
+  const targetMesh = resolveTurretTargetMesh(payload);
+  handleTurretAttack(payload, { targetMesh });
+});
+
 socket.on('minionSpawningStatus', ({ enabled } = {}) => {
   const isEnabled = enabled !== false;
   if (!isEnabled) {
@@ -279,6 +304,31 @@ socket.on('playerDamaged', ({ id, hp, from, source, maxHp }) => {
   }
 });
 
+socket.on('playerHealthUpdate', ({ id, hp, maxHp }) => {
+  if (typeof id !== 'string') return;
+  const isLocal = id === socket.id;
+  const target = isLocal ? null : players.find(p => p.id === id);
+  const effectiveMax = isLocal
+    ? (maxHp ?? getSelectedClassDefinition()?.stats?.maxHp ?? 100)
+    : (maxHp ?? target?.maxHp ?? 100);
+
+  if (!isLocal && target) {
+    target.hp = hp;
+    target.maxHp = effectiveMax;
+    if (hp > 0) {
+      target.dead = false;
+    }
+  }
+
+  setHealthBarValue(id, hp, effectiveMax);
+  setHealthBarVisible(id, hp > 0);
+  setHealthBarLevel(id, isLocal ? (localProgress.level ?? 1) : (target?.level ?? 1));
+
+  if (isLocal) {
+    emitLocalHealth(hp, effectiveMax);
+  }
+});
+
 socket.on('playerDied', ({ id, by, source }) => {
   if (id === socket.id) {
     // Hide own character and show death overlay
@@ -362,7 +412,7 @@ socket.on('playerRespawned', ({ id, x, z, hp, maxHp, classId, team }) => {
 
 socket.on('autoattack', (payload) => {
   if (!payload) return;
-  const { type, from, targetId, pos, dir, speed, ttl, projId, homing } = payload;
+  const { type, from, targetId, targetType: rawTargetType, pos, dir, speed, ttl, projId, homing } = payload;
   if (from === socket.id) {
     window.dispatchEvent(new CustomEvent('autoattackConfirmed', { detail: payload }));
   }
@@ -376,9 +426,10 @@ socket.on('autoattack', (payload) => {
   }
   if (type === 'ranged') {
     if (!pos) return;
+    const targetType = rawTargetType || (typeof targetId === 'number' ? 'minion' : 'player');
     if (homing) {
       // Homing projectile follows target mesh; server decides hit
-      const targetMesh = (targetId === socket.id) ? character : remotePlayers[targetId];
+      const targetMesh = resolveAttackTargetMesh(targetType, targetId);
       if (!targetMesh) return;
       const handle = launchHomingProjectile(pos, targetMesh, speed || 14, ttl, 0xffff55, () => {
         if (projId) aaProjectiles.delete(projId);
