@@ -1,6 +1,7 @@
 // src/scene.js
 import * as THREE from 'three';
 import { initTerrain } from './terrain.js';
+import { isLowSpecDevice } from '../core/performance.js';
 
 export const scene = new THREE.Scene();
 
@@ -30,11 +31,14 @@ export const cameraOffset = new THREE.Vector3(
 export function initScene() {
   // Configure le renderer
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
+  const lowSpec = isLowSpecDevice();
+  const targetPixelRatio = Math.min(lowSpec ? 1.0 : 1.5, window.devicePixelRatio || 1);
+  renderer.setPixelRatio(targetPixelRatio);
 
   // Active les ombres (optionnel)
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const enableShadows = !isLowSpecDevice();
+  renderer.shadowMap.enabled = enableShadows;
+  renderer.shadowMap.type = enableShadows ? THREE.PCFSoftShadowMap : THREE.BasicShadowMap;
 
   // Lumière directionnelle principale
   const dirLight = new THREE.DirectionalLight(0xffffff, 1);

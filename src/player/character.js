@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { isWalkable } from '../world/collision.js';
+import { isWalkableWithClearance } from '../world/collision.js';
 import { socket } from "../network/socket.js";
-import { findPath,hasLineOfSight } from './pathfinding.js'; // ← à ne pas oublier !
+import { findPath } from './pathfinding.js'; // ← à ne pas oublier !
 import { onClassChange } from './classes.js';
 
 export let attackTarget = null;
@@ -26,6 +26,15 @@ export const character = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x2194ce })
 );
 character.userData.moveSpeed = 4.5;
+const velocity = new THREE.Vector3();
+character.userData.velocity = velocity;
+
+const tempDir = new THREE.Vector3();
+const tempStartPos = new THREE.Vector3();
+const tempDelta = new THREE.Vector3();
+const forwardVector = new THREE.Vector3(0, 0, 1);
+const tempQuaternion = new THREE.Quaternion();
+const POSITION_CLEARANCE = 0.15;
 
 // position initiale
 character.position.set(0, 0.5, 0);
@@ -73,8 +82,25 @@ export function setPath(newPath) {
   path = newPath.map(v => v.clone());
 }
 
+export function getCurrentPath() {
+  return path.map(point => point.clone());
+}
+
+export function getCurrentDestination() {
+  if (path.length === 0) {
+    return null;
+  }
+  const last = path[path.length - 1];
+  return last ? last.clone() : null;
+}
+
 export function updateCharacter(delta) {
-  if (!isGameActive || !controlsEnabled || isDead) return;
+  tempStartPos.copy(character.position);
+
+  if (!isGameActive || !controlsEnabled || isDead) {
+    velocity.set(0, 0, 0);
+    return;
+  }
   if (attackTarget) {
     const targetPos = attackTarget.position.clone();
     targetPos.y = character.position.y;
@@ -107,32 +133,42 @@ export function updateCharacter(delta) {
   }
 
   // Si pas de cible d'attaque, on suit le path défini
-  if (path.length === 0) return;
+  if (path.length === 0) {
+    velocity.set(0, 0, 0);
+    return;
+  }
 
   // prochaine cible sur le chemin
   const target = path[0];
-  const dir = new THREE.Vector3().subVectors(target, character.position);
-  const dist = dir.length();
+  tempDir.subVectors(target, character.position);
+  const dist = tempDir.length();
 
   if (dist > 0.1) {
-    dir.normalize();
+    tempDir.normalize();
     const step = Math.min(moveSpeed * delta, dist);
-    character.position.addScaledVector(dir, step);
+    character.position.addScaledVector(tempDir, step);
     // orientation
-    const q = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      dir
+    tempQuaternion.setFromUnitVectors(
+      forwardVector,
+      tempDir
     );
-    character.quaternion.slerp(q, 0.2);
+    character.quaternion.slerp(tempQuaternion, 0.2);
   } else {
     // waypoint atteint : on le retire
     path.shift();
+  }
+
+  tempDelta.subVectors(character.position, tempStartPos);
+  if (delta > 0) {
+    velocity.copy(tempDelta).divideScalar(delta);
+  } else {
+    velocity.set(0, 0, 0);
   }
 }
 
 export function checkCharacterPosition() {
   // Correction si bloqué dans un mur (walkable = noir)
-  if (!isWalkable(character.position.x, character.position.z)) {
+  if (!isWalkableWithClearance(character.position.x, character.position.z, POSITION_CLEARANCE)) {
     // Recherche locale d'un point walkable autour de la position actuelle
     const safe = findNearestWalkable(character.position.x, character.position.z);
     if (safe) {
@@ -157,7 +193,7 @@ function findNearestWalkable(x, z) {
       const theta = (a / STEPS) * Math.PI * 2;
       const nx = x + Math.cos(theta) * r;
       const nz = z + Math.sin(theta) * r;
-      if (isWalkable(nx, nz)) {
+      if (isWalkableWithClearance(nx, nz, POSITION_CLEARANCE)) {
         return { x: nx, z: nz };
       }
     }
@@ -202,3 +238,21 @@ export function setMoveSpeed(value) {
     character.userData.moveSpeed = moveSpeed;
   }
 }
+
+export function getMoveSpeed() {
+  return moveSpeed;
+}
+
+export function getCharacterVelocity() {
+  return velocity.clone();
+}
+
+export function ensureCharacterPositionClear() {
+  checkCharacterPosition();
+}
+
+window.addEventListener('spellFlashResolved', (event) => {
+  const { from } = event.detail || {};
+  if (!from || from !== socket.id) return;
+  ensureCharacterPositionClear();
+});

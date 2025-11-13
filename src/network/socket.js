@@ -88,6 +88,7 @@ socket.on("connect", () => {
   emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, leveledUp: false, levelsGained: 0 });
   setMoveSpeed(classDef?.stats?.moveSpeed ?? 4.5);
   socket.emit('selectClass', { classId: selectedClassId });
+  socket.emit('requestMinionSpawningStatus');
 });
 
 socket.on("playersList", (serverPlayers = []) => {
@@ -188,6 +189,16 @@ socket.on('minionsRemoved', ({ ids } = {}) => {
 
 socket.on('minionProjectile', (payload = {}) => {
   handleMinionProjectile(payload);
+});
+
+socket.on('minionSpawningStatus', ({ enabled } = {}) => {
+  const isEnabled = enabled !== false;
+  if (!isEnabled) {
+    resetMinions();
+  }
+  window.dispatchEvent(new CustomEvent('minionSpawningStatus', {
+    detail: { enabled: isEnabled }
+  }));
 });
 
 socket.on("playerPositionUpdate", (data) => {

@@ -23,6 +23,8 @@ img.onload = () => {
  * - worldSize doit correspondre à la taille du terrain (ici 50).
  */
 const worldSize = 100;
+const CLEARANCE_SAMPLES = 16;
+
 export function isWalkable(x, z) {
   if (!imgData) return false; // pas encore prêt
   // convertir coordonnées monde [-size/2, +size/2] en UV [0..w-1],[0..h-1]
@@ -32,4 +34,22 @@ export function isWalkable(x, z) {
   const idx = (v * w + u) * 4;
   const r = imgData[idx]; // niveaux de gris → R=G=B
   return r === 0;
+}
+
+export function isWalkableWithClearance(x, z, clearance = 0) {
+  if (!isWalkable(x, z)) {
+    return false;
+  }
+  if (!clearance || clearance <= 0) {
+    return true;
+  }
+  for (let i = 0; i < CLEARANCE_SAMPLES; i += 1) {
+    const angle = (i / CLEARANCE_SAMPLES) * Math.PI * 2;
+    const offsetX = Math.cos(angle) * clearance;
+    const offsetZ = Math.sin(angle) * clearance;
+    if (!isWalkable(x + offsetX, z + offsetZ)) {
+      return false;
+    }
+  }
+  return true;
 }

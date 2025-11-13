@@ -8,9 +8,11 @@ import { updateMarker } from './ui/marker.js';
 import { initSpells, updateSpells } from './player/spells.js';
 import { socket, clearActiveProjectiles } from "./network/socket.js";
 import { initHealthBars, updateHealthBars, resetHealthBars } from './ui/healthBars.js';
+import { initDevOverlay, toggleDevOverlay, setDevOverlayEnabled, updateDevOverlay } from './ui/devOverlay.js';
 import { initMenus, showHomeMenu, hideHomeMenu, showPauseMenu, hidePauseMenu, isPauseMenuVisible } from './ui/menu.js';
 import { clearRemotePlayers } from './network/remotePlayers.js';
 import { initMinions, updateMinions, clearMinions } from './world/minions.js';
+import { isLowSpecDevice } from './core/performance.js';
 
 initScene();
 initMinions(scene);
@@ -20,7 +22,21 @@ initOverlay();
 initCameraControl(renderer.domElement);
 initSpells();
 initHealthBars(camera, renderer.domElement);
+initDevOverlay(scene);
 const updatePerformanceStats = initPerformanceStats();
+updateHealthBars();
+updateDevOverlay();
+const lowSpecMode = isLowSpecDevice();
+
+const MINION_UPDATE_INTERVAL = lowSpecMode ? 1 / 30 : 0;
+const HEALTHBAR_UPDATE_INTERVAL = lowSpecMode ? 1 / 30 : 0;
+const DEV_OVERLAY_INTERVAL = lowSpecMode ? 0.15 : 0;
+const PERF_STATS_INTERVAL = lowSpecMode ? 0.5 : 0;
+
+let minionAccumulator = 0;
+let healthBarAccumulator = 0;
+let overlayAccumulator = 0;
+let performanceAccumulator = 0;
 
 setGameActive(false);
 setControlsEnabled(false);
@@ -79,6 +95,7 @@ function returnToHome() {
   setGameActive(false);
   setControlsEnabled(false);
   setDeadState(false);
+  setDevOverlayEnabled(false);
   character.visible = false;
   character.position.set(0, 0.5, 0);
   clearActiveProjectiles();
@@ -93,6 +110,20 @@ function returnToHome() {
 }
 
 window.addEventListener('keydown', (event) => {
+  if (event.repeat) return;
+  const target = event.target;
+  const isEditable = target && (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.isContentEditable
+  );
+
+  if (!isEditable && event.key && event.key.toLowerCase() === 'p') {
+    if (!matchRunning) return;
+    toggleDevOverlay();
+    return;
+  }
+
   if (event.key === 'Escape') {
     if (!matchRunning) return;
     if (isPauseMenuVisible()) {
@@ -128,7 +159,15 @@ function animate(now = performance.now()) {
     updateCamera(delta);
   }
 
-  updateMinions(delta);
+  if (lowSpecMode && MINION_UPDATE_INTERVAL > 0) {
+    minionAccumulator += delta;
+    while (minionAccumulator >= MINION_UPDATE_INTERVAL) {
+      updateMinions(MINION_UPDATE_INTERVAL);
+      minionAccumulator -= MINION_UPDATE_INTERVAL;
+    }
+  } else {
+    updateMinions(delta);
+  }
 
   if (isHidden) {
     accumulatedHiddenTime += rawDelta;
@@ -139,11 +178,37 @@ function animate(now = performance.now()) {
   } else {
     renderer.render(scene, camera);
     if (updatePerformanceStats) {
-      updatePerformanceStats(rawDelta);
+      if (lowSpecMode && PERF_STATS_INTERVAL > 0) {
+        performanceAccumulator += rawDelta;
+        if (performanceAccumulator >= PERF_STATS_INTERVAL) {
+          updatePerformanceStats(performanceAccumulator);
+          performanceAccumulator = 0;
+        }
+      } else {
+        updatePerformanceStats(rawDelta);
+      }
     }
   }
 
-  updateHealthBars();
+  if (lowSpecMode && HEALTHBAR_UPDATE_INTERVAL > 0) {
+    healthBarAccumulator += rawDelta;
+    if (healthBarAccumulator >= HEALTHBAR_UPDATE_INTERVAL) {
+      updateHealthBars();
+      healthBarAccumulator = 0;
+    }
+  } else {
+    updateHealthBars();
+  }
+
+  if (lowSpecMode && DEV_OVERLAY_INTERVAL > 0) {
+    overlayAccumulator += rawDelta;
+    if (overlayAccumulator >= DEV_OVERLAY_INTERVAL) {
+      updateDevOverlay();
+      overlayAccumulator = 0;
+    }
+  } else {
+    updateDevOverlay();
+  }
   requestAnimationFrame(animate);
 }
 animate();

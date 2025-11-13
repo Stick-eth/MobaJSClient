@@ -1,7 +1,7 @@
 import * as THREE from 'three'; 
 import { renderer, camera } from '../world/scene.js';
 import { terrainMesh } from '../world/terrain.js';
-import { setPath, character, moveToAttackTarget, attackTarget, isDead, isGameActive, areControlsEnabled, getAttackRange } from '../player/character.js';
+import { setPath, character, moveToAttackTarget, attackTarget, isDead, isGameActive, areControlsEnabled, getAttackRange, getCurrentDestination, getCurrentPath } from '../player/character.js';
 import { isWalkable } from '../world/collision.js';
 import { showMarker } from '../ui/marker.js';
 import { findPath, hasLineOfSight } from '../player/pathfinding.js';
@@ -182,6 +182,19 @@ export function updateInput(delta = 1/60) {
       });
     }
   }
+}
+
+export function getInputDebugState() {
+  return {
+    attackTargetId: currentAttackTarget?.userData?.id ?? null,
+    pendingAutoAttack,
+    lastAutoAttackTime,
+    lastAutoAttackAttempt,
+    autoAttackCooldownMs,
+    hoveredEnemyId: hoveredEnemy?.userData?.id ?? null,
+    currentPath: getCurrentPath(),
+    destination: getCurrentDestination(),
+  };
 }
 
 function isEnemyMesh(mesh) {
