@@ -10,11 +10,13 @@ import { socket } from '../network/socket.js';
 import { onClassChange } from '../player/classes.js';
 import { isEnemyTeam, getMyTeam } from '../core/teams.js';
 import { getMinionMeshes } from '../world/minions.js';
+import { getAttackableTurretMeshes } from '../world/turrets.js';
 
 const raycaster = new THREE.Raycaster();
 const mouse     = new THREE.Vector2();
 
 const AUTOATTACK_RETRY_MS = 120;
+const SELF_COLLISION_RADIUS = 0.45;
 
 let lastAutoAttackTime = 0;
 let autoAttackCooldownMs = 650; // en ms, dépend de la classe
@@ -50,7 +52,28 @@ function getTargetType(mesh) {
   if (type === 'player' || unitType === 'player') {
     return 'player';
   }
+  if (type === 'turret' || unitType === 'turret') {
+    return 'turret';
+  }
   return 'player';
+}
+
+function getTargetHitRadius(mesh) {
+  if (!mesh?.userData) return 0;
+  if (typeof mesh.userData.hitRadius === 'number') {
+    return mesh.userData.hitRadius;
+  }
+  if (typeof mesh.userData.radius === 'number') {
+    return mesh.userData.radius;
+  }
+  return 0;
+}
+
+function planarDistance(a, b) {
+  if (!a || !b) return Number.POSITIVE_INFINITY;
+  const dx = (a.x ?? 0) - (b.x ?? 0);
+  const dz = (a.z ?? 0) - (b.z ?? 0);
+  return Math.hypot(dx, dz);
 }
 
 function setHoverHighlight(mesh, highlighted) {
@@ -114,7 +137,9 @@ function getTargetableEnemyMeshes() {
     .filter(mesh => mesh && mesh.visible && isEnemyMesh(mesh));
   const minions = getMinionMeshes()
     .filter(mesh => mesh && mesh.visible && isEnemyMesh(mesh));
-  return [...players, ...minions];
+  const turrets = getAttackableTurretMeshes()
+    .filter(mesh => mesh && mesh.visible && isEnemyMesh(mesh));
+  return [...players, ...minions, ...turrets];
 }
 
 function updateHoverEnemy() {
@@ -142,6 +167,9 @@ function updateHoverEnemy() {
 function startAttackingEnemy(enemyMesh) {
   const resolved = resolveTargetableMesh(enemyMesh);
   if (!resolved || !isEnemyMesh(resolved)) {
+    return;
+  }
+  if (getTargetType(resolved) === 'turret' && !resolved.userData?.attackable) {
     return;
   }
   stopAttacking();
@@ -257,17 +285,23 @@ export function updateInput(delta = 1/60) {
     stopAttacking();
     return;
   }
+  if (currentAttackTarget && getTargetType(currentAttackTarget) === 'turret' && !currentAttackTarget.userData?.attackable) {
+    stopAttacking();
+    return;
+  }
 
   // -- Gestion autoattack (cooldown géré proprement) --
   if (currentAttackTarget) {
-    const dist = character.position.distanceTo(currentAttackTarget.position);
+    const dist = planarDistance(character.position, currentAttackTarget.position);
     const now = Date.now();
     if (pendingAutoAttack && (now - lastAutoAttackAttempt) >= AUTOATTACK_RETRY_MS) {
       pendingAutoAttack = false;
     }
     const aaRange = getAttackRange();
+    const targetRadius = getTargetHitRadius(currentAttackTarget);
+    const effectiveRange = aaRange + SELF_COLLISION_RADIUS + targetRadius;
     if (
-      dist <= aaRange + 0.05 &&
+      dist <= effectiveRange + 0.05 &&
       !pendingAutoAttack &&
       (now - lastAutoAttackTime) >= autoAttackCooldownMs
     ) {

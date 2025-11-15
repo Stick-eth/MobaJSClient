@@ -34,6 +34,8 @@ export function addRemotePlayer(id, x, z, hp = 100, maxHp = 100, classId = 'mark
   mesh.userData.type = 'player';
   mesh.userData.classId = classId;
   mesh.userData.moveSpeed = 4.5;
+  mesh.userData.radius = 0.45;
+  mesh.userData.hitRadius = 0.45;
 
   const normalizedTeam = setPlayerTeam(id, team);
   applyTeamVisuals(mesh, normalizedTeam);

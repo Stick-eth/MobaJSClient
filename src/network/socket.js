@@ -7,7 +7,13 @@ import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLev
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
 import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
 import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions, getMinionMeshById } from '../world/minions.js';
-import { handleTurretAttack } from '../world/turrets.js';
+import {
+  handleTurretAttack,
+  applyTurretSnapshot,
+  applyTurretUpdate,
+  handleTurretDestroyed,
+  getTurretMeshByUid
+} from '../world/turrets.js';
 
 const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
 const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
@@ -36,7 +42,15 @@ function requestMinionSnapshot() {
 }
 
 function resolveTurretTargetMesh(payload = {}) {
-  const { targetType, targetId } = payload;
+  let { targetType, targetId } = payload;
+  if (!targetType && typeof targetId === 'string') {
+    if (getTurretMeshByUid(targetId)) {
+      targetType = 'turret';
+    }
+  }
+  if (targetType === 'turret') {
+    return getTurretMeshByUid(targetId) || null;
+  }
   if (targetType === 'player') {
     if (targetId === socket.id) {
       return character;
@@ -214,6 +228,18 @@ socket.on('minionProjectile', (payload = {}) => {
 socket.on('turretAttack', (payload = {}) => {
   const targetMesh = resolveTurretTargetMesh(payload);
   handleTurretAttack(payload, { targetMesh });
+});
+
+socket.on('turretSnapshot', ({ turrets: snapshot } = {}) => {
+  applyTurretSnapshot(Array.isArray(snapshot) ? snapshot : []);
+});
+
+socket.on('turretUpdate', (payload = {}) => {
+  applyTurretUpdate(payload);
+});
+
+socket.on('turretDestroyed', (payload = {}) => {
+  handleTurretDestroyed(payload);
 });
 
 socket.on('minionSpawningStatus', ({ enabled } = {}) => {
@@ -426,7 +452,16 @@ socket.on('autoattack', (payload) => {
   }
   if (type === 'ranged') {
     if (!pos) return;
-    const targetType = rawTargetType || (typeof targetId === 'number' ? 'minion' : 'player');
+    let targetType = rawTargetType;
+    if (!targetType) {
+      if (typeof targetId === 'number') {
+        targetType = 'minion';
+      } else if (typeof targetId === 'string' && getTurretMeshByUid(targetId)) {
+        targetType = 'turret';
+      } else {
+        targetType = 'player';
+      }
+    }
     if (homing) {
       // Homing projectile follows target mesh; server decides hit
       const targetMesh = resolveAttackTargetMesh(targetType, targetId);

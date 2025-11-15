@@ -26,6 +26,8 @@ export const character = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x2194ce })
 );
 character.userData.moveSpeed = 4.5;
+character.userData.radius = 0.45;
+character.userData.hitRadius = 0.45;
 const velocity = new THREE.Vector3();
 character.userData.velocity = velocity;
 

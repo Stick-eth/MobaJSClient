@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { TEAM_BLUE, TEAM_RED } from '../core/teams.js';
+import { TEAM_BLUE, TEAM_RED, getHealthBarColorForTeam } from '../core/teams.js';
+import {
+  trackHealthBar,
+  setHealthBarValue,
+  setHealthBarVisible,
+  setHealthBarLevel,
+  setHealthBarColor,
+  untrackHealthBar
+} from '../ui/healthBars.js';
 
 const TEAM_KEYS = [TEAM_BLUE, TEAM_RED];
 
@@ -14,6 +22,7 @@ turretGroups[TEAM_RED].name = 'Red Turrets';
 const TURRET_RADIUS = 0.6;
 const TURRET_HEIGHT = 3;
 const TURRET_SEGMENTS = 16;
+const DEFAULT_TURRET_HIT_RADIUS = 1.4;
 
 const turretGeometry = new THREE.CylinderGeometry(
   TURRET_RADIUS,
@@ -46,6 +55,9 @@ const turretProjectiles = new Map();
 const turretRays = new Map();
 const turretProjectileMaterialCache = new Map();
 const turretProjectileGeometry = new THREE.SphereGeometry(0.18, 12, 12);
+const turretStateByUid = new Map();
+const turretHealthBars = new Map();
+const destroyedAnimations = new Map();
 let sceneRef = null;
 let nextTurretProjectileId = 1;
 const tempDir = new THREE.Vector3();
@@ -54,6 +66,10 @@ const tempTurretTop = new THREE.Vector3();
 const tempRayVec = new THREE.Vector3();
 const tempRayQuat = new THREE.Quaternion();
 const tempRayUp = new THREE.Vector3(0, 1, 0);
+const TURRET_BAR_PREFIX = 'turret-';
+const TURRET_DESTRUCTION_DURATION = 1.15;
+const tempEuler = new THREE.Euler();
+const tempScale = new THREE.Vector3();
 
 function parseIndex(value) {
   if (value === null || value === undefined) return null;
@@ -157,7 +173,13 @@ export function initTurrets({
       turretUVs.forEach(({ u, v }, markerIndex) => {
         const { x, z } = uvToWorld(u, v, terrainSize);
         const elevation = sampleHeight(u, v);
-        const turret = new THREE.Mesh(turretGeometry, turretMaterials[team]);
+        const baseMaterial = turretMaterials[team];
+        const turretMaterial = baseMaterial?.clone ? baseMaterial.clone() : baseMaterial;
+        if (turretMaterial) {
+          turretMaterial.transparent = false;
+          turretMaterial.opacity = 1;
+        }
+        const turret = new THREE.Mesh(turretGeometry, turretMaterial);
 
         const baseId = id || ((lane !== null && tier !== null) ? `t_${lane}_${tier}` : `entry-${entryIndex}`);
         const uid = `${team}:${baseId}`;
@@ -175,23 +197,30 @@ export function initTurrets({
         turret.name = nameParts.join('-');
 
         turret.userData.team = team;
-        turret.userData.type = 'turret';
-        turret.userData.id = id;
+    turret.userData.type = 'turret';
+    turret.userData.id = uid;
         turret.userData.lane = lane;
         turret.userData.tier = tier;
         turret.userData.markerIndex = turretUVs.length > 1 ? markerIndex : null;
         turret.userData.mapPath = path;
-        turret.userData.uid = uid;
-        turret.userData.attackRadius = 5;
+    turret.userData.uid = uid;
+    turret.userData.turretId = id;
+  turret.userData.attackRadius = 5;
+  turret.userData.hitRadius = DEFAULT_TURRET_HIT_RADIUS;
+    turret.userData.attackable = false;
+    turret.userData.baseRotation = turret.rotation.clone();
+    turret.userData.baseScale = turret.scale.clone();
 
         turret.castShadow = true;
         turret.receiveShadow = true;
         turret.position.set(x, elevation + TURRET_HEIGHT / 2, z);
         group.add(turret);
-        if (!turretMeshByUid.has(uid)) {
-          turretMeshByUid.set(uid, turret);
-        }
+        turretMeshByUid.set(uid, turret);
         ensureRayForTurret(uid, turret);
+        const storedState = turretStateByUid.get(uid);
+        if (storedState) {
+          applyStateToTurret(uid, storedState, { previous: storedState, immediate: storedState.destroyed });
+        }
       });
     });
   });
@@ -311,6 +340,195 @@ function resolveProjectileTarget(projectile) {
   return projectile.targetPosition || projectile.start;
 }
 
+function getTurretBarId(uid) {
+  return `${TURRET_BAR_PREFIX}${uid}`;
+}
+
+function ensureTurretHealthBar(uid, mesh, state) {
+  if (!mesh || !state) return;
+  const existingId = turretHealthBars.get(uid);
+  if (!existingId && (!state.attackable || state.destroyed)) {
+    return;
+  }
+  const barId = existingId || getTurretBarId(uid);
+  if (!existingId) {
+    const color = getHealthBarColorForTeam(state.team) || '#f1c40f';
+    trackHealthBar(barId, mesh, { color, max: state.maxHp || 1 });
+    turretHealthBars.set(uid, barId);
+  }
+  if (state.team) {
+    setHealthBarColor(barId, getHealthBarColorForTeam(state.team));
+  }
+  const tierLabel = typeof state.tier === 'number' && state.tier > 0
+    ? `T${state.tier}`
+    : 'Turret';
+  setHealthBarLevel(barId, tierLabel);
+  setHealthBarValue(barId, state.hp ?? state.maxHp ?? 0, state.maxHp ?? 1);
+  setHealthBarVisible(barId, Boolean(state.attackable && !state.destroyed && mesh.visible));
+}
+
+function removeTurretHealthBar(uid) {
+  const barId = turretHealthBars.get(uid);
+  if (!barId) return;
+  untrackHealthBar(barId);
+  turretHealthBars.delete(uid);
+}
+
+function removeTurretRay(turretId) {
+  if (!turretId || !turretRays.has(turretId)) return;
+  const entry = turretRays.get(turretId);
+  if (entry?.mesh && entry.mesh.parent === sceneRef) {
+    sceneRef.remove(entry.mesh);
+  }
+  if (entry?.disc && entry.disc.parent === sceneRef) {
+    sceneRef.remove(entry.disc);
+  }
+  turretRays.delete(turretId);
+}
+
+function finalizeTurretRemoval(uid) {
+  removeTurretHealthBar(uid);
+  removeTurretRay(uid);
+  const mesh = turretMeshByUid.get(uid);
+  if (mesh && mesh.parent === sceneRef) {
+    sceneRef.remove(mesh);
+  }
+  if (mesh?.material?.dispose && mesh.material !== undefined) {
+    mesh.material.dispose();
+  }
+  turretMeshByUid.delete(uid);
+  destroyedAnimations.delete(uid);
+}
+
+function triggerTurretDestruction(uid, { immediate = false } = {}) {
+  const mesh = turretMeshByUid.get(uid);
+  if (!mesh) return;
+  removeTurretHealthBar(uid);
+  removeTurretRay(uid);
+  if (immediate) {
+    finalizeTurretRemoval(uid);
+    return;
+  }
+  if (destroyedAnimations.has(uid)) {
+    return;
+  }
+  const entry = {
+    mesh,
+    elapsed: 0,
+    duration: TURRET_DESTRUCTION_DURATION,
+    baseRotation: mesh.rotation.clone(),
+    baseScale: mesh.scale.clone(),
+    basePositionY: mesh.position.y,
+    axis: Math.random() > 0.5 ? 'x' : 'z'
+  };
+  const material = mesh.material;
+  if (material) {
+    material.transparent = true;
+    material.opacity = 1;
+  }
+  destroyedAnimations.set(uid, entry);
+}
+
+function applyStateToTurret(uid, state, { previous = null, immediate = false } = {}) {
+  const mesh = turretMeshByUid.get(uid);
+  if (!mesh) {
+    return;
+  }
+  mesh.userData.team = state.team;
+  mesh.userData.tier = state.tier;
+  mesh.userData.uid = uid;
+  mesh.userData.id = uid;
+  mesh.userData.attackable = Boolean(state.attackable && !state.destroyed);
+  mesh.userData.hp = state.hp;
+  mesh.userData.maxHp = state.maxHp;
+  mesh.userData.hitRadius = typeof state.hitRadius === 'number'
+    ? state.hitRadius
+    : (mesh.userData.hitRadius ?? DEFAULT_TURRET_HIT_RADIUS);
+
+  if (state.destroyed) {
+    mesh.visible = true;
+    triggerTurretDestruction(uid, { immediate });
+    return;
+  }
+
+  if (destroyedAnimations.has(uid)) {
+    destroyedAnimations.delete(uid);
+  }
+  mesh.visible = true;
+  mesh.rotation.copy(mesh.userData.baseRotation || mesh.rotation);
+  mesh.scale.copy(mesh.userData.baseScale || mesh.scale);
+  const material = mesh.material;
+  if (material) {
+    material.transparent = false;
+    material.opacity = 1;
+  }
+
+  ensureTurretHealthBar(uid, mesh, state);
+  const barId = turretHealthBars.get(uid);
+  if (barId) {
+    setHealthBarVisible(barId, Boolean(state.attackable && mesh.visible));
+  }
+}
+
+export function getTurretState(uid) {
+  if (typeof uid !== 'string') return null;
+  return turretStateByUid.get(uid) || null;
+}
+
+export function getTurretMeshByUid(uid) {
+  if (typeof uid !== 'string') return null;
+  return turretMeshByUid.get(uid) || null;
+}
+
+export function getAttackableTurretMeshes() {
+  const result = [];
+  turretMeshByUid.forEach((mesh, uid) => {
+    if (!mesh) return;
+    const state = turretStateByUid.get(uid);
+    if (!state || state.destroyed || !state.attackable) return;
+    if (!mesh.visible) return;
+    result.push(mesh);
+  });
+  return result;
+}
+
+function upsertTurretState(snapshot = {}) {
+  if (!snapshot || typeof snapshot.uid !== 'string') return;
+  const existing = turretStateByUid.get(snapshot.uid) || null;
+  const merged = existing ? { ...existing, ...snapshot } : { ...snapshot };
+  turretStateByUid.set(snapshot.uid, merged);
+  applyStateToTurret(snapshot.uid, merged, {
+    previous: existing,
+    immediate: Boolean(snapshot.immediate)
+  });
+}
+
+export function applyTurretSnapshot(turrets = []) {
+  if (!Array.isArray(turrets)) return;
+  const seen = new Set();
+  turrets.forEach(entry => {
+    if (!entry || typeof entry.uid !== 'string') return;
+    seen.add(entry.uid);
+    upsertTurretState({ ...entry, immediate: entry.destroyed });
+  });
+  turretStateByUid.forEach((state, uid) => {
+    if (!seen.has(uid)) {
+      turretStateByUid.delete(uid);
+      finalizeTurretRemoval(uid);
+    }
+  });
+}
+
+export function applyTurretUpdate(payload = {}) {
+  if (!payload || typeof payload.uid !== 'string') return;
+  upsertTurretState(payload);
+}
+
+export function handleTurretDestroyed(payload = {}) {
+  if (!payload || typeof payload.uid !== 'string') return;
+  upsertTurretState({ ...payload, destroyed: true, attackable: false });
+}
+
 function clearTurretProjectiles() {
   if (!turretProjectiles.size) return;
   turretProjectiles.forEach(projectile => {
@@ -396,55 +614,91 @@ export function updateTurrets(delta) {
         updateTurretRay(turretId, null);
       });
     }
-    return;
-  }
-  const finished = [];
-  turretProjectiles.forEach((projectile, id) => {
-    if (!projectile?.mesh) {
-      finished.push(id);
-      return;
-    }
-    projectile.remaining -= delta;
-    const targetPosRef = resolveProjectileTarget(projectile);
-    if (!targetPosRef) {
-      if (sceneRef && projectile.mesh.parent === sceneRef) {
-        sceneRef.remove(projectile.mesh);
+  } else {
+    const finished = [];
+    turretProjectiles.forEach((projectile, id) => {
+      if (!projectile?.mesh) {
+        finished.push(id);
+        return;
       }
-      releaseTurretRay(projectile.turretId);
-      finished.push(id);
-      return;
-    }
-    tempTarget.copy(targetPosRef);
-    tempDir.subVectors(tempTarget, projectile.mesh.position);
-    const distance = tempDir.length();
-    if (distance <= projectile.impactRadius || projectile.remaining <= 0) {
-      projectile.mesh.position.copy(tempTarget);
-      if (sceneRef && projectile.mesh.parent === sceneRef) {
-        sceneRef.remove(projectile.mesh);
+      projectile.remaining -= delta;
+      const targetPosRef = resolveProjectileTarget(projectile);
+      if (!targetPosRef) {
+        if (sceneRef && projectile.mesh.parent === sceneRef) {
+          sceneRef.remove(projectile.mesh);
+        }
+        releaseTurretRay(projectile.turretId);
+        finished.push(id);
+        return;
       }
-      releaseTurretRay(projectile.turretId);
-      finished.push(id);
-      return;
-    }
-    tempDir.divideScalar(distance || 1);
-    const step = projectile.speed * delta;
-    const advance = Math.min(distance, step);
-    projectile.mesh.position.addScaledVector(tempDir, advance);
-    updateTurretRay(projectile.turretId, projectile);
-  });
-  finished.forEach(id => turretProjectiles.delete(id));
+      tempTarget.copy(targetPosRef);
+      tempDir.subVectors(tempTarget, projectile.mesh.position);
+      const distance = tempDir.length();
+      if (distance <= projectile.impactRadius || projectile.remaining <= 0) {
+        projectile.mesh.position.copy(tempTarget);
+        if (sceneRef && projectile.mesh.parent === sceneRef) {
+          sceneRef.remove(projectile.mesh);
+        }
+        releaseTurretRay(projectile.turretId);
+        finished.push(id);
+        return;
+      }
+      tempDir.divideScalar(distance || 1);
+      const step = projectile.speed * delta;
+      const advance = Math.min(distance, step);
+      projectile.mesh.position.addScaledVector(tempDir, advance);
+      updateTurretRay(projectile.turretId, projectile);
+    });
+    finished.forEach(id => turretProjectiles.delete(id));
 
-  const activeTurretIds = new Set();
-  turretProjectiles.forEach(projectile => {
-    if (projectile?.turretId) {
-      activeTurretIds.add(projectile.turretId);
-    }
-  });
-  turretRays.forEach((entry, turretId) => {
-    if (!activeTurretIds.has(turretId)) {
-      updateTurretRay(turretId, null);
-    }
-  });
+    const activeTurretIds = new Set();
+    turretProjectiles.forEach(projectile => {
+      if (projectile?.turretId) {
+        activeTurretIds.add(projectile.turretId);
+      }
+    });
+    turretRays.forEach((entry, turretId) => {
+      if (!activeTurretIds.has(turretId)) {
+        updateTurretRay(turretId, null);
+      }
+    });
+  }
+
+  if (delta > 0 && destroyedAnimations.size) {
+    const completed = [];
+    destroyedAnimations.forEach((entry, uid) => {
+      if (!entry || !entry.mesh) {
+        completed.push(uid);
+        return;
+      }
+      entry.elapsed += delta;
+      const duration = Math.max(0.0001, entry.duration);
+      const t = THREE.MathUtils.clamp(entry.elapsed / duration, 0, 1);
+      const angle = THREE.MathUtils.degToRad(65) * t;
+      tempEuler.copy(entry.baseRotation);
+      if (entry.axis === 'x') {
+        tempEuler.x += angle;
+      } else {
+        tempEuler.z += angle;
+      }
+      entry.mesh.rotation.set(tempEuler.x, tempEuler.y, tempEuler.z);
+      tempScale.copy(entry.baseScale).multiplyScalar(THREE.MathUtils.lerp(1, 0.05, t));
+      entry.mesh.scale.set(tempScale.x, tempScale.y, tempScale.z);
+      entry.mesh.position.y = entry.basePositionY - (TURRET_HEIGHT * 0.4 * t);
+      const materials = Array.isArray(entry.mesh.material)
+        ? entry.mesh.material
+        : [entry.mesh.material];
+      materials.forEach(mat => {
+        if (!mat) return;
+        mat.transparent = true;
+        mat.opacity = THREE.MathUtils.lerp(1, 0, t);
+      });
+      if (t >= 1) {
+        completed.push(uid);
+      }
+    });
+    completed.forEach(uid => finalizeTurretRemoval(uid));
+  }
 }
 
 function uvToWorld(u, v, terrainSize) {
