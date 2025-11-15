@@ -1,5 +1,5 @@
 import { io } from "socket.io-client";
-import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer, updateRemotePlayerClass, updateRemotePlayerTeam } from "./remotePlayers.js";
+import { addRemotePlayer, updateRemotePlayer, removeRemotePlayer, updateRemotePlayerClass, updateRemotePlayerTeam, clearRemotePlayers } from "./remotePlayers.js";
 import { remotePlayers } from './remotePlayers.js';
 import { qSpellCast, launchLinearProjectile, launchHomingProjectile } from '../player/projectiles.js';
 import { character, setDeadState, setMoveSpeed } from '../player/character.js';
@@ -24,6 +24,43 @@ const SNAPSHOT_REQUEST_COOLDOWN_MS = 1000;
 
 let lastMinionSnapshotRequest = 0;
 
+const connectionMeta = {
+  hadInitialConnection: false,
+  isConnecting: false,
+  attempt: 0,
+  lastDisconnectManual: false
+};
+
+function emitNetworkStatus(status, detail = {}) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('network:status', {
+    detail: { status, ...detail }
+  }));
+}
+
+function formatSocketError(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (error && typeof error.message === 'string' && error.message.length) {
+    return error.message;
+  }
+  if (error && typeof error.description === 'string' && error.description.length) {
+    return error.description;
+  }
+  if (error && typeof error.type === 'string' && error.type.length) {
+    return error.type;
+  }
+  if (error && typeof error.code === 'string' && error.code.length) {
+    return `Code ${error.code}`;
+  }
+  if (error && typeof error.context === 'string' && error.context.length) {
+    return error.context;
+  }
+  return '';
+}
+
 function safeNowMs() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
     return performance.now();
@@ -31,10 +68,11 @@ function safeNowMs() {
   return Date.now();
 }
 
-function requestMinionSnapshot() {
+function requestMinionSnapshot(options = {}) {
   if (!socket.connected) return;
+  const force = Boolean(options?.force);
   const now = safeNowMs();
-  if (now - lastMinionSnapshotRequest < SNAPSHOT_REQUEST_COOLDOWN_MS) {
+  if (!force && now - lastMinionSnapshotRequest < SNAPSHOT_REQUEST_COOLDOWN_MS) {
     return;
   }
   lastMinionSnapshotRequest = now;
@@ -69,7 +107,12 @@ function resolveAttackTargetMesh(targetType, targetId) {
 }
 
 export const socket = io(serverUrl, {
-  autoConnect: false
+  autoConnect: false,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1500,
+  reconnectionDelayMax: 8000,
+  timeout: 5000
 });
 
 let selectedClassId = getSelectedClassId();
@@ -101,6 +144,57 @@ const aaProjectiles = new Map(); // projId -> { destroy }
 export let players = [];
 export let myId = null;
 
+export function connectToServer(reason = 'manual') {
+  if (socket.connected) {
+    emitNetworkStatus('connected', {
+      isReconnect: connectionMeta.hadInitialConnection,
+      alreadyConnected: true
+    });
+    return;
+  }
+
+  if (!socket.disconnected) {
+    const statusKey = connectionMeta.hadInitialConnection ? 'reconnecting' : 'connecting';
+    emitNetworkStatus(statusKey, {
+      attempt: Math.max(1, connectionMeta.attempt || 1),
+      reason,
+      isReconnect: connectionMeta.hadInitialConnection,
+      phase: connectionMeta.hadInitialConnection ? 'reconnect' : 'initial'
+    });
+    return;
+  }
+
+  connectionMeta.isConnecting = true;
+  connectionMeta.attempt = 1;
+  connectionMeta.lastDisconnectManual = false;
+  const phase = connectionMeta.hadInitialConnection ? 'reconnect' : 'initial';
+  emitNetworkStatus('connecting', {
+    attempt: connectionMeta.attempt,
+    reason,
+    isReconnect: connectionMeta.hadInitialConnection,
+    phase
+  });
+  socket.connect();
+}
+
+export function disconnectFromServer() {
+  connectionMeta.lastDisconnectManual = true;
+  connectionMeta.isConnecting = false;
+  connectionMeta.attempt = 0;
+  if (socket.connected || !socket.disconnected) {
+    socket.disconnect();
+  }
+}
+
+export function requestWorldResync({ force = false } = {}) {
+  if (!socket.connected) {
+    return;
+  }
+  requestMinionSnapshot({ force });
+  socket.emit('snapshotRequest');
+  socket.emit('requestMinionSpawningStatus');
+}
+
 export function clearActiveProjectiles() {
   aaProjectiles.forEach(handle => {
     try { handle.destroy(); } catch {}
@@ -108,7 +202,78 @@ export function clearActiveProjectiles() {
   aaProjectiles.clear();
 }
 
+socket.on('connect_error', (error) => {
+  const attempt = Math.max(1, connectionMeta.attempt || 1);
+  const message = formatSocketError(error) || 'Erreur de connexion au serveur';
+  emitNetworkStatus('connection_error', {
+    reason: message,
+    attempt,
+    isReconnect: connectionMeta.hadInitialConnection
+  });
+  connectionMeta.isConnecting = true;
+  connectionMeta.attempt = attempt + 1;
+});
+
+socket.on('connect_timeout', () => {
+  const attempt = Math.max(1, connectionMeta.attempt || 1);
+  emitNetworkStatus('connection_error', {
+    reason: 'Délai de connexion dépassé',
+    attempt,
+    timeout: true,
+    isReconnect: connectionMeta.hadInitialConnection
+  });
+  connectionMeta.isConnecting = true;
+  connectionMeta.attempt = attempt + 1;
+});
+
+socket.on('error', (error) => {
+  const attempt = Math.max(1, connectionMeta.attempt || 1);
+  const message = formatSocketError(error) || 'Erreur réseau inattendue';
+  emitNetworkStatus('connection_error', {
+    reason: message,
+    attempt,
+    isReconnect: connectionMeta.hadInitialConnection
+  });
+});
+
+socket.on('reconnect_attempt', (attempt) => {
+  connectionMeta.isConnecting = true;
+  connectionMeta.attempt = attempt;
+  emitNetworkStatus('reconnecting', {
+    attempt,
+    isReconnect: true
+  });
+});
+
+socket.on('reconnect_error', (error) => {
+  const attempt = Math.max(1, connectionMeta.attempt || 1);
+  const message = formatSocketError(error) || 'Reconnexion échouée';
+  emitNetworkStatus('connection_error', {
+    reason: message,
+    attempt,
+    isReconnect: true
+  });
+  connectionMeta.isConnecting = true;
+  connectionMeta.attempt = attempt + 1;
+});
+
+socket.on('reconnect_failed', () => {
+  emitNetworkStatus('connection_error', {
+    reason: 'Échec de la reconnexion',
+    attempt: connectionMeta.attempt,
+    isReconnect: true,
+    fatal: true
+  });
+  connectionMeta.isConnecting = false;
+});
+
 socket.on("connect", () => {
+  const isReconnect = connectionMeta.hadInitialConnection;
+  connectionMeta.hadInitialConnection = true;
+  connectionMeta.isConnecting = false;
+  connectionMeta.attempt = 0;
+  connectionMeta.lastDisconnectManual = false;
+  emitNetworkStatus('connected', { isReconnect });
   myId = socket.id;
   lastMinionSnapshotRequest = 0;
   const classDef = getSelectedClassDefinition();
@@ -574,7 +739,16 @@ socket.on('spellCast', ({ spell, from, pos, dir, classId, origin }) => {
   }
 });
 
-socket.on('disconnect', () => {
+socket.on('disconnect', (reason) => {
+  const wasManual = connectionMeta.lastDisconnectManual || reason === 'io client disconnect';
+  emitNetworkStatus(wasManual ? 'client_disconnected' : 'disconnected', {
+    reason,
+    manual: wasManual
+  });
+  connectionMeta.isConnecting = false;
+  connectionMeta.attempt = 0;
+  connectionMeta.lastDisconnectManual = false;
+  clearRemotePlayers();
   players = [];
   myId = null;
   emitLocalHealth(0, 0);

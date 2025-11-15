@@ -6,9 +6,10 @@ import { initOverlay } from './ui/overlay.js';
 import { initPerformanceStats } from './ui/performanceStats.js';
 import { updateMarker } from './ui/marker.js';
 import { initSpells, updateSpells } from './player/spells.js';
-import { socket, clearActiveProjectiles } from "./network/socket.js";
+import { socket, clearActiveProjectiles, connectToServer, disconnectFromServer, requestWorldResync } from "./network/socket.js";
 import { initHealthBars, updateHealthBars, resetHealthBars } from './ui/healthBars.js';
 import { initDevOverlay, toggleDevOverlay, setDevOverlayEnabled, updateDevOverlay } from './ui/devOverlay.js';
+import { initNetworkStatusUI, showNetworkOverlay, hideNetworkOverlay } from './ui/networkStatus.js';
 import { initMenus, showHomeMenu, hideHomeMenu, showPauseMenu, hidePauseMenu, isPauseMenuVisible } from './ui/menu.js';
 import { clearRemotePlayers } from './network/remotePlayers.js';
 import { initMinions, updateMinions, clearMinions } from './world/minions.js';
@@ -24,6 +25,7 @@ initCameraControl(renderer.domElement);
 initSpells();
 initHealthBars(camera, renderer.domElement);
 initDevOverlay(scene);
+initNetworkStatusUI();
 const updatePerformanceStats = initPerformanceStats();
 updateHealthBars();
 updateDevOverlay();
@@ -39,16 +41,26 @@ let healthBarAccumulator = 0;
 let overlayAccumulator = 0;
 let performanceAccumulator = 0;
 
+let matchRunning = false;
+let gamePaused = false;
+let networkHold = false;
+let pendingMatchStart = false;
+
 setGameActive(false);
 setControlsEnabled(false);
 setDeadState(false);
 character.visible = false;
+updateSimulationLocks();
 
 let lastTime = performance.now();
 let isHidden = false;
 let accumulatedHiddenTime = 0;
-let matchRunning = false;
-let gamePaused = false;
+
+function updateSimulationLocks() {
+  const shouldRun = matchRunning && !gamePaused && !networkHold;
+  setGameActive(shouldRun);
+  setControlsEnabled(shouldRun);
+}
 
 initMenus({
   onPlay: startGame,
@@ -57,44 +69,56 @@ initMenus({
 });
 
 function startGame() {
-  if (matchRunning) {
-    if (gamePaused) resumeGame();
+  if (pendingMatchStart) {
     return;
   }
-  matchRunning = true;
+  if (matchRunning) {
+    if (gamePaused && !networkHold) {
+      resumeGame();
+    }
+    return;
+  }
+
+  pendingMatchStart = true;
   gamePaused = false;
+  networkHold = true;
   hideHomeMenu();
   hidePauseMenu();
   setDeadState(false);
-  setGameActive(true);
-  setControlsEnabled(true);
-  character.visible = true;
+  character.visible = false;
   character.position.set(0, 0.5, 0);
-  if (!socket.connected) {
-    socket.connect();
+  updateSimulationLocks();
+
+  if (socket.connected) {
+    pendingMatchStart = false;
+    finalizeMatchStart();
+    return;
   }
+
+  connectToServer('user-start');
 }
 
 function resumeGame() {
   if (!matchRunning || !gamePaused) return;
   gamePaused = false;
   hidePauseMenu();
-  setControlsEnabled(true);
+  updateSimulationLocks();
 }
 
 function pauseGame() {
   if (!matchRunning || gamePaused) return;
   gamePaused = true;
-  setControlsEnabled(false);
+  updateSimulationLocks();
   showPauseMenu();
 }
 
 function returnToHome() {
   hidePauseMenu();
+  pendingMatchStart = false;
   matchRunning = false;
   gamePaused = false;
-  setGameActive(false);
-  setControlsEnabled(false);
+  networkHold = false;
+  updateSimulationLocks();
   setDeadState(false);
   setDevOverlayEnabled(false);
   character.visible = false;
@@ -104,10 +128,24 @@ function returnToHome() {
   clearMinions();
   resetHealthBars();
   window.dispatchEvent(new CustomEvent('hideDeathOverlay'));
-  if (socket.connected) {
-    socket.disconnect();
-  }
+  hideNetworkOverlay();
+  disconnectFromServer();
   showHomeMenu();
+}
+
+function finalizeMatchStart() {
+  matchRunning = true;
+  pendingMatchStart = false;
+  gamePaused = false;
+  networkHold = false;
+  hideHomeMenu();
+  hidePauseMenu();
+  hideNetworkOverlay();
+  setDeadState(false);
+  character.visible = true;
+  character.position.set(0, 0.5, 0);
+  updateSimulationLocks();
+  requestWorldResync({ force: true });
 }
 
 window.addEventListener('keydown', (event) => {
@@ -136,8 +174,135 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('playerRespawnedLocal', () => {
-  if (matchRunning && !gamePaused) {
+  if (matchRunning && !gamePaused && !networkHold) {
     setControlsEnabled(true);
+  }
+});
+
+window.addEventListener('networkOverlay:retry', () => {
+  connectToServer('manual-retry');
+});
+
+window.addEventListener('networkOverlay:quit', () => {
+  returnToHome();
+});
+
+window.addEventListener('network:status', (event) => {
+  const detail = event.detail || {};
+  const status = detail.status;
+  const attempt = detail.attempt;
+  const reason = detail.reason;
+  const isReconnect = Boolean(detail.isReconnect);
+  const manual = Boolean(detail.manual);
+  const fatal = Boolean(detail.fatal);
+
+  if (!status) {
+    return;
+  }
+
+  const shouldBlock = pendingMatchStart || matchRunning;
+
+  switch (status) {
+    case 'connecting': {
+      if (!shouldBlock) {
+        break;
+      }
+      networkHold = true;
+      updateSimulationLocks();
+      const message = attempt && attempt > 1
+        ? `Connexion en cours... (tentative ${attempt})`
+        : 'Connexion en cours...';
+      showNetworkOverlay({
+        title: 'Connexion au serveur',
+        message,
+        showSpinner: true,
+        showRetry: false,
+        showQuit: true
+      });
+      break;
+    }
+    case 'reconnecting': {
+      if (!shouldBlock) {
+        break;
+      }
+      networkHold = true;
+      updateSimulationLocks();
+      const message = attempt && attempt > 0
+        ? `Tentative de reconnexion (${attempt})...`
+        : 'Tentative de reconnexion...';
+      showNetworkOverlay({
+        title: 'Reconnexion au serveur',
+        message,
+        showSpinner: true,
+        showRetry: false,
+        showQuit: true
+      });
+      break;
+    }
+    case 'disconnected': {
+      if (!shouldBlock || manual) {
+        break;
+      }
+      networkHold = true;
+      updateSimulationLocks();
+      const message = reason && reason.length
+        ? `Connexion perdue (${reason}).`
+        : 'Connexion au serveur perdue.';
+      showNetworkOverlay({
+        title: 'Connexion perdue',
+        message,
+        detail: 'Tentative de reconnexion automatique en cours...',
+        showSpinner: true,
+        showRetry: true,
+        showQuit: true
+      });
+      break;
+    }
+    case 'connection_error': {
+      if (!shouldBlock) {
+        break;
+      }
+      networkHold = true;
+      updateSimulationLocks();
+      const message = reason && reason.length
+        ? reason
+        : 'Impossible de joindre le serveur.';
+      const detailText = fatal
+        ? 'Plus aucune tentative automatique. Utilise Reessayer ou retourne au menu.'
+        : (attempt && attempt > 1
+          ? `Nouvelle tentative automatique en cours (essai ${attempt}).`
+          : 'Nouvelle tentative automatique en cours.');
+      showNetworkOverlay({
+        title: isReconnect ? 'Reconnexion impossible' : 'Serveur inaccessible',
+        message,
+        detail: detailText,
+        showSpinner: false,
+        showRetry: true,
+        showQuit: true
+      });
+      break;
+    }
+    case 'connected': {
+      networkHold = false;
+      hideNetworkOverlay();
+      if (pendingMatchStart) {
+        finalizeMatchStart();
+      } else {
+        updateSimulationLocks();
+        if (matchRunning) {
+          requestWorldResync({ force: true });
+        }
+      }
+      break;
+    }
+    case 'client_disconnected': {
+      networkHold = false;
+      hideNetworkOverlay();
+      updateSimulationLocks();
+      break;
+    }
+    default:
+      break;
   }
 });
 
@@ -147,7 +312,7 @@ function animate(now = performance.now()) {
   lastTime = now;
   const delta = Math.min(rawDelta, 0.05);
 
-  const shouldSimulate = matchRunning && !gamePaused && !isHidden;
+  const shouldSimulate = matchRunning && !gamePaused && !networkHold && !isHidden;
 
   if (shouldSimulate) {
     updateCharacter(delta);
