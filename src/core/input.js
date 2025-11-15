@@ -19,7 +19,7 @@ const AUTOATTACK_RETRY_MS = 120;
 const SELF_COLLISION_RADIUS = 0.45;
 
 let lastAutoAttackTime = 0;
-let autoAttackCooldownMs = 650; // en ms, dépend de la classe
+let autoAttackCooldownMs = 650;
 let pendingAutoAttack = false;
 let lastAutoAttackAttempt = 0;
 
@@ -27,8 +27,112 @@ let hoveredEnemy = null;
 let currentAttackTarget = null;
 let autoAttackInterval = null;
 
+const HOVER_OUTLINE_FLAG = '__hoverOutline';
+const FRESNEL_VERTEX_SHADER = `
+uniform float uPower;
+uniform float uThickness;
+varying float vFresnel;
 
-// -- Survol souris sur joueurs ennemis --
+void main() {
+  vec3 displacedPosition = position + normal * uThickness;
+  vec4 mvPosition = modelViewMatrix * vec4(displacedPosition, 1.0);
+  vec3 viewDir = normalize(-mvPosition.xyz);
+  vec3 worldNormal = normalize(normalMatrix * normal);
+  float fresnel = pow(1.0 - max(0.0, dot(worldNormal, viewDir)), uPower);
+  vFresnel = fresnel;
+  gl_Position = projectionMatrix * mvPosition;
+}`;
+
+const FRESNEL_FRAGMENT_SHADER = `
+uniform vec3 uColor;
+uniform float uOpacity;
+uniform float uIntensity;
+varying float vFresnel;
+
+void main() {
+  float intensity = clamp(vFresnel * uIntensity, 0.0, 1.0);
+  gl_FragColor = vec4(uColor * intensity, uOpacity * intensity);
+}`;
+
+function createFresnelMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(0xff3030) },
+      uOpacity: { value: 1.0 },
+      uIntensity: { value: 2.4 },
+      uPower: { value: 1.8 },
+      uThickness: { value: 0.045 }
+    },
+    vertexShader: FRESNEL_VERTEX_SHADER,
+    fragmentShader: FRESNEL_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.FrontSide
+  });
+}
+
+function collectHoverTargets(root) {
+  const targets = [];
+  if (!root) {
+    return targets;
+  }
+  root.traverse(node => {
+    if (node.userData && node.userData[HOVER_OUTLINE_FLAG]) {
+      return;
+    }
+    if ((node.isMesh || node.isSkinnedMesh) && node.visible !== false) {
+      targets.push(node);
+    }
+  });
+  return targets;
+}
+
+function ensureHoverOverlay(target) {
+  if (!target || !target.geometry) {
+    return null;
+  }
+  if (target.userData && target.userData.__hoverOverlay) {
+    return target.userData.__hoverOverlay;
+  }
+  const material = createFresnelMaterial();
+  const overlay = new THREE.Mesh(target.geometry, material);
+  overlay.name = `${target.name || 'hover'}-outline`;
+  overlay.visible = false;
+  overlay.renderOrder = (target.renderOrder || 0) + 2;
+  overlay.frustumCulled = target.frustumCulled;
+  overlay.matrixAutoUpdate = true;
+  overlay.castShadow = false;
+  overlay.receiveShadow = false;
+  overlay.userData = overlay.userData || {};
+  overlay.userData[HOVER_OUTLINE_FLAG] = true;
+  overlay.layers.mask = target.layers.mask;
+  overlay.raycast = () => {};
+  target.add(overlay);
+  overlay.position.set(0, 0, 0);
+  overlay.rotation.set(0, 0, 0);
+  overlay.scale.set(1, 1, 1);
+  target.userData = target.userData || {};
+  target.userData.__hoverOverlay = overlay;
+  return overlay;
+}
+
+function setHoverHighlight(mesh, highlighted) {
+  if (!mesh) {
+    return;
+  }
+  const targets = collectHoverTargets(mesh);
+  targets.forEach(target => {
+    const overlay = highlighted
+      ? ensureHoverOverlay(target)
+      : (target.userData && target.userData.__hoverOverlay) || null;
+    if (overlay) {
+      overlay.visible = highlighted;
+    }
+  });
+}
+
 function resolveTargetableMesh(object) {
   let node = object;
   while (node) {
@@ -74,62 +178,6 @@ function planarDistance(a, b) {
   const dx = (a.x ?? 0) - (b.x ?? 0);
   const dz = (a.z ?? 0) - (b.z ?? 0);
   return Math.hypot(dx, dz);
-}
-
-function setHoverHighlight(mesh, highlighted) {
-  if (!mesh) return;
-  if (highlighted) {
-    if (!mesh.userData.__hoverOriginalMaterial) {
-      mesh.userData.__hoverOriginalMaterial = mesh.material;
-    }
-    if (!mesh.userData.__hoverMaterial) {
-      const cloned = mesh.material?.clone ? mesh.material.clone() : null;
-      if (cloned) {
-        if (cloned.emissive) {
-          cloned.emissive.setHex(0xff2222);
-          cloned.emissiveIntensity = Math.max(cloned.emissiveIntensity ?? 0.65, 0.65);
-        } else if (cloned.color) {
-          cloned.color.setHex(0xff2222);
-        }
-        mesh.userData.__hoverMaterial = cloned;
-      }
-    }
-    if (mesh.userData.__hoverMaterial) {
-      mesh.material = mesh.userData.__hoverMaterial;
-    }
-
-    const indicator = mesh.userData?.indicator;
-    if (indicator) {
-      indicator.userData = indicator.userData || {};
-      if (!indicator.userData.__hoverOriginalMaterial) {
-        indicator.userData.__hoverOriginalMaterial = indicator.material;
-      }
-      if (!indicator.userData.__hoverMaterial) {
-        const indicatorClone = indicator.material?.clone ? indicator.material.clone() : null;
-        if (indicatorClone) {
-          if (indicatorClone.emissive) {
-            indicatorClone.emissive.setHex(0xff5555);
-            indicatorClone.emissiveIntensity = Math.max(indicatorClone.emissiveIntensity ?? 0.75, 0.75);
-          }
-          if (indicatorClone.color) {
-            indicatorClone.color.setHex(0xff5555);
-          }
-          indicator.userData.__hoverMaterial = indicatorClone;
-        }
-      }
-      if (indicator.userData.__hoverMaterial) {
-        indicator.material = indicator.userData.__hoverMaterial;
-      }
-    }
-  } else {
-    if (mesh.userData.__hoverOriginalMaterial) {
-      mesh.material = mesh.userData.__hoverOriginalMaterial;
-    }
-    const indicator = mesh.userData?.indicator;
-    if (indicator?.userData?.__hoverOriginalMaterial) {
-      indicator.material = indicator.userData.__hoverOriginalMaterial;
-    }
-  }
 }
 
 function getTargetableEnemyMeshes() {

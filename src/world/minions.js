@@ -206,41 +206,12 @@ function applyMinionData(entry, minion, { snap = false } = {}) {
   entry.mesh.userData.unitType = 'minion';
   if (entry.mesh.userData.minionRole !== entry.type) {
     entry.mesh.userData.minionRole = entry.type;
-    if (entry.mesh.userData.__hoverMaterial) {
-      if (entry.mesh.material === entry.mesh.userData.__hoverMaterial && entry.mesh.userData.__hoverOriginalMaterial) {
-        entry.mesh.material = entry.mesh.userData.__hoverOriginalMaterial;
-      }
-      if (entry.mesh.userData.__hoverMaterial.dispose) {
-        entry.mesh.userData.__hoverMaterial.dispose();
-      }
-      entry.mesh.userData.__hoverMaterial = null;
-    }
-    if (entry.mesh.userData.__hoverOriginalMaterial) {
-      entry.mesh.userData.__hoverOriginalMaterial = entry.mesh.material;
-    }
     const scale = getScaleForType(entry.type);
     entry.mesh.scale.set(scale, scale, scale);
     const indicator = entry.mesh.userData.indicator;
     if (indicator) {
-      if (indicator.userData?.__hoverMaterial) {
-        if (indicator.material === indicator.userData.__hoverMaterial && indicator.userData.__hoverOriginalMaterial) {
-          indicator.material = indicator.userData.__hoverOriginalMaterial;
-        }
-        if (indicator.userData.__hoverMaterial.dispose) {
-          indicator.userData.__hoverMaterial.dispose();
-        }
-        indicator.userData.__hoverMaterial = null;
-      }
       indicator.material = getTypeIndicatorMaterial(entry.type);
       indicator.visible = entry.type !== 'melee';
-      indicator.userData = indicator.userData || {};
-      if (indicator.userData.__hoverMaterial?.dispose) {
-        indicator.userData.__hoverMaterial.dispose();
-        indicator.userData.__hoverMaterial = null;
-      }
-      if (indicator.userData.__hoverOriginalMaterial) {
-        indicator.userData.__hoverOriginalMaterial = indicator.material;
-      }
     }
   }
 
