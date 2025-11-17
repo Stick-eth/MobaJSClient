@@ -20,6 +20,7 @@ const defaultProtocol = typeof window !== 'undefined' ? window.location.protocol
 const defaultHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 const defaultUrl = `${defaultProtocol}//${defaultHost}:3000`;
 const serverUrl = envUrl || defaultUrl;
+const devCommandsToken = (import.meta.env.VITE_DEV_COMMANDS_TOKEN || '').trim();
 const SNAPSHOT_REQUEST_COOLDOWN_MS = 1000;
 
 let lastMinionSnapshotRequest = 0;
@@ -106,14 +107,20 @@ function resolveAttackTargetMesh(targetType, targetId) {
   return resolveTurretTargetMesh({ targetType, targetId });
 }
 
-export const socket = io(serverUrl, {
+const socketOptions = {
   autoConnect: false,
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1500,
   reconnectionDelayMax: 8000,
   timeout: 5000
-});
+};
+
+if (devCommandsToken) {
+  socketOptions.auth = { devToken: devCommandsToken };
+}
+
+export const socket = io(serverUrl, socketOptions);
 
 let selectedClassId = getSelectedClassId();
 
@@ -802,8 +809,20 @@ socket.on('shop:purchaseResult', (payload = {}) => {
   }));
 });
 
+socket.on('shop:sellResult', (payload = {}) => {
+  window.dispatchEvent(new CustomEvent('shop:sellResult', {
+    detail: { ...payload }
+  }));
+});
+
 socket.on('goldReward', (payload = {}) => {
   showMinionGoldSplash(payload);
+});
+
+socket.on('dev:commandResult', (payload = {}) => {
+  window.dispatchEvent(new CustomEvent('dev:commandResult', {
+    detail: { ...payload }
+  }));
 });
 
 socket.on('spellCast', ({ spell, from, pos, dir, classId, origin }) => {
@@ -905,6 +924,11 @@ socket.on('playerClassChanged', ({ id, classId, hp, maxHp }) => {
 export function purchaseItem(itemId) {
   if (!itemId) return;
   socket.emit('shop:purchaseItem', { itemId });
+}
+
+export function sellItem(slot) {
+  if (!Number.isInteger(slot) || slot < 0) return;
+  socket.emit('shop:sellItem', { slot });
 }
 
 export function getLocalInventory() {

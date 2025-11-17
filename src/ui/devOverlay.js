@@ -10,12 +10,16 @@ let infoElement = null;
 let ringGroup = null;
 let pathLine = null;
 let minionToggleButton = null;
+let actionContainer = null;
+let grantGoldButton = null;
+let levelUpButton = null;
 
 const STATIC_RING_CONFIGS = [
   { radius: 5, color: 0x36c2ff },
   { radius: 10, color: 0xffc736 },
   { radius: 20, color: 0xff4664 }
 ];
+const DEV_FEATURES_ENABLED = Boolean(import.meta.env && import.meta.env.DEV);
 const AUTO_RING_COLOR = 0x7cff89;
 const RING_LABEL_HEIGHT = 0.35;
 const PATH_LINE_COLOR = 0x00ffd0;
@@ -26,8 +30,25 @@ let minionsEnabled = true;
 let minionTogglePending = false;
 let minionToggleTimeoutId = null;
 
+const DEV_COMMAND_MESSAGE_TIMEOUT_MS = 4000;
+const DEV_COMMAND_PENDING_TIMEOUT_MS = 3000;
+const progressState = {
+  level: 1,
+  xp: 0,
+  xpToNext: 200
+};
+let devCommandPending = false;
+let currentDevCommand = null;
+let devCommandTimeoutId = null;
+let lastDevCommandStatus = null;
+
 const reusableVelocity = new THREE.Vector3();
 const reusablePoint = new THREE.Vector3();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('playerProgressUpdate', handlePlayerProgressUpdate, { passive: true });
+  window.addEventListener('dev:commandResult', handleDevCommandResultEvent, { passive: true });
+}
 
 export function initDevOverlay(scene) {
   if (initialized) return;
@@ -39,12 +60,33 @@ export function initDevOverlay(scene) {
   infoElement.className = 'dev-overlay-body';
   rootElement.appendChild(infoElement);
 
+  if (DEV_FEATURES_ENABLED) {
+    actionContainer = document.createElement('div');
+    actionContainer.className = 'dev-overlay-actions';
+    rootElement.appendChild(actionContainer);
+  }
+
   minionToggleButton = document.createElement('button');
   minionToggleButton.type = 'button';
   minionToggleButton.className = 'dev-overlay-button';
   minionToggleButton.addEventListener('click', handleMinionToggleClick);
-  rootElement.appendChild(minionToggleButton);
+  (actionContainer || rootElement).appendChild(minionToggleButton);
+
+  if (DEV_FEATURES_ENABLED) {
+    grantGoldButton = document.createElement('button');
+    grantGoldButton.type = 'button';
+    grantGoldButton.className = 'dev-overlay-button';
+    grantGoldButton.addEventListener('click', handleGrantGoldClick);
+    actionContainer.appendChild(grantGoldButton);
+
+    levelUpButton = document.createElement('button');
+    levelUpButton.type = 'button';
+    levelUpButton.className = 'dev-overlay-button';
+    levelUpButton.addEventListener('click', handleLevelUpClick);
+    actionContainer.appendChild(levelUpButton);
+  }
   updateMinionButton();
+  updateDevActionButtons();
 
   document.body.appendChild(rootElement);
 
@@ -84,6 +126,7 @@ export function setDevOverlayEnabled(value) {
   enabled = Boolean(value);
   syncVisibility();
   updateMinionButton();
+  updateDevActionButtons();
 }
 
 export function isDevOverlayEnabled() {
@@ -147,6 +190,10 @@ export function updateDevOverlay() {
   const minionStateLabel = minionsEnabled ? 'enabled' : 'disabled';
   const pendingSuffix = minionTogglePending ? ' (pending)' : '';
 
+  const xpToNext = typeof progressState.xpToNext === 'number' ? progressState.xpToNext : 0;
+  const xpLabel = xpToNext <= 0 ? 'MAX' : `${Math.max(0, Math.round(progressState.xp || 0))}/${Math.max(0, Math.round(xpToNext))}`;
+  const devStatus = getDevCommandStatusLine();
+
   const lines = [
     `state: running=${isGameActive ? 'yes' : 'no'} | controls=${areControlsEnabled() ? 'on' : 'off'} | dead=${isDead ? 'yes' : 'no'}`,
     `position: x=${character.position.x.toFixed(2)} y=${character.position.y.toFixed(2)} z=${character.position.z.toFixed(2)}`,
@@ -157,8 +204,15 @@ export function updateDevOverlay() {
     `attack target: ${attackTargetId} | dist=${attackDistance} | hovered=${debugState.hoveredEnemyId ?? 'none'}`,
     `autoattack: pending=${debugState.pendingAutoAttack ? 'yes' : 'no'} | cooldown=${debugState.autoAttackCooldownMs}ms | since=${sinceLastAA}`,
     `last attempt: ${sinceAttemptAA}`,
-    `minions: ${minionStateLabel}${pendingSuffix}`
+    `minions: ${minionStateLabel}${pendingSuffix}`,
+    `progress: lvl=${progressState.level} | xp=${xpLabel}`
   ];
+
+  if (devStatus) {
+    lines.push(`dev cmd: ${devStatus}`);
+  }
+
+  updateDevActionButtons();
 
   if (infoElement) {
     infoElement.textContent = lines.join('\n');
@@ -415,4 +469,154 @@ function updateMinionButton() {
   const label = minionsEnabled ? 'Disable Minions' : 'Enable Minions';
   minionToggleButton.textContent = minionTogglePending ? `${label} (pending)` : label;
   minionToggleButton.disabled = minionTogglePending;
+}
+
+function handleGrantGoldClick() {
+  if (!socket || devCommandPending) {
+    return;
+  }
+  if (!socket.connected) {
+    recordDevStatusMessage('hors ligne');
+    return;
+  }
+  setDevCommandPending('grantGold');
+  socket.emit('dev:grantGold');
+}
+
+function handleLevelUpClick() {
+  if (!socket || devCommandPending) {
+    return;
+  }
+  if (!socket.connected) {
+    recordDevStatusMessage('hors ligne');
+    return;
+  }
+  if (typeof progressState.xpToNext === 'number' && progressState.xpToNext <= 0) {
+    recordDevStatusMessage('niveau max atteint');
+    return;
+  }
+  setDevCommandPending('levelUp');
+  socket.emit('dev:levelUp');
+}
+
+function setDevCommandPending(command) {
+  devCommandPending = true;
+  currentDevCommand = command;
+  if (devCommandTimeoutId) {
+    clearTimeout(devCommandTimeoutId);
+  }
+  devCommandTimeoutId = setTimeout(() => {
+    devCommandPending = false;
+    currentDevCommand = null;
+    updateDevActionButtons();
+  }, DEV_COMMAND_PENDING_TIMEOUT_MS);
+  updateDevActionButtons();
+}
+
+function clearDevCommandPending() {
+  devCommandPending = false;
+  currentDevCommand = null;
+  if (devCommandTimeoutId) {
+    clearTimeout(devCommandTimeoutId);
+    devCommandTimeoutId = null;
+  }
+  updateDevActionButtons();
+}
+
+function recordDevStatusMessage(message) {
+  lastDevCommandStatus = {
+    message,
+    timestamp: Date.now()
+  };
+  updateDevActionButtons();
+}
+
+function updateDevActionButtons() {
+  if (!DEV_FEATURES_ENABLED) {
+    return;
+  }
+  const offline = !socket?.connected;
+
+  if (grantGoldButton) {
+    const isPending = devCommandPending && currentDevCommand === 'grantGold';
+    grantGoldButton.disabled = Boolean(devCommandPending) || offline;
+    grantGoldButton.textContent = isPending ? 'Envoi...' : '+1000 Gold';
+    grantGoldButton.title = offline ? 'Connectez-vous au serveur pour utiliser cette action' : '+1000 gold (dev)';
+  }
+
+  if (levelUpButton) {
+    const levelCapReached = typeof progressState.xpToNext === 'number' && progressState.xpToNext <= 0;
+    const isPending = devCommandPending && currentDevCommand === 'levelUp';
+    levelUpButton.disabled = Boolean(devCommandPending) || levelCapReached || offline;
+    if (levelCapReached) {
+      levelUpButton.textContent = 'Niveau max';
+      levelUpButton.title = 'Vous avez atteint le niveau maximum';
+    } else if (isPending) {
+      levelUpButton.textContent = 'Envoi...';
+      levelUpButton.title = 'Gain d\'un niveau en cours';
+    } else {
+      levelUpButton.textContent = 'Gain niveau';
+      levelUpButton.title = offline ? 'Connectez-vous au serveur pour utiliser cette action' : 'Ajoute l\'XP pour passer au niveau suivant';
+    }
+  }
+}
+
+function handlePlayerProgressUpdate(event) {
+  const detail = event?.detail || {};
+  if (typeof detail.level === 'number') {
+    progressState.level = detail.level;
+  }
+  if (typeof detail.xp === 'number') {
+    progressState.xp = detail.xp;
+  }
+  if (typeof detail.xpToNext === 'number') {
+    progressState.xpToNext = detail.xpToNext;
+  }
+  updateDevActionButtons();
+}
+
+function handleDevCommandResultEvent(event) {
+  clearDevCommandPending();
+  const detail = event?.detail || {};
+  const now = Date.now();
+  let message = '';
+
+  if (detail.ok) {
+    if (detail.command === 'grantGold') {
+      const amount = typeof detail.amount === 'number' ? detail.amount : 1000;
+      const total = typeof detail.gold === 'number' ? detail.gold : null;
+      message = `+${amount} gold${total !== null ? ` (total ${total})` : ''}`;
+    } else if (detail.command === 'levelUp') {
+      message = detail.level ? `niveau ${detail.level}` : 'niveau +1';
+    } else {
+      message = `${detail.command || 'commande'} ok`;
+    }
+  } else {
+    const reasonMap = {
+      disabled: 'désactivé',
+      unauthorized: 'non autorisé',
+      rate_limited: 'trop rapide',
+      level_cap: 'niveau max atteint',
+      player_missing: 'joueur introuvable'
+    };
+    const rawReason = detail.reason || 'échec';
+    const prettyReason = reasonMap[rawReason] || rawReason;
+    message = `${detail.command || 'commande'}: ${prettyReason}`;
+  }
+
+  lastDevCommandStatus = { message, timestamp: now };
+}
+
+function getDevCommandStatusLine() {
+  if (!DEV_FEATURES_ENABLED) {
+    return '';
+  }
+  if (!lastDevCommandStatus) {
+    return '';
+  }
+  const now = Date.now();
+  if (now - lastDevCommandStatus.timestamp > DEV_COMMAND_MESSAGE_TIMEOUT_MS) {
+    return '';
+  }
+  return lastDevCommandStatus.message;
 }
