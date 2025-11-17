@@ -44,6 +44,12 @@ const SUMMONER_SLOTS = [
   { slot: 'f', label: 'F', icon: defaultSpellIcon }
 ];
 
+const ITEM_SLOT_COUNT = 6;
+
+const itemCatalog = new Map();
+let currentInventory = [];
+let itemSlotCount = ITEM_SLOT_COUNT;
+
 const hudElements = {
   container: null,
   classIcon: null,
@@ -53,7 +59,10 @@ const hudElements = {
   summonerSlots: new Map(),
   levelValue: null,
   xpFill: null,
-  xpText: null
+  xpText: null,
+  goldValue: null,
+  itemsWrapper: null,
+  itemSlots: []
 };
 
 export function initOverlay() {
@@ -227,6 +236,36 @@ window.addEventListener('playerProgressUpdate', (event) => {
   }
 });
 
+window.addEventListener('playerGoldChanged', (event) => {
+  const { gold } = event.detail || {};
+  updateHudGold(gold);
+});
+
+window.addEventListener('playerInventoryChanged', (event) => {
+  const { inventory } = event.detail || {};
+  const normalized = Array.isArray(inventory) ? inventory : [];
+  updateHudInventory(normalized);
+});
+
+window.addEventListener('shop:data', (event) => {
+  const detail = event.detail || {};
+  const items = Array.isArray(detail.items) ? detail.items : [];
+  itemCatalog.clear();
+  items.forEach(item => {
+    if (item && typeof item.id === 'string') {
+      itemCatalog.set(item.id, item);
+    }
+  });
+  if (Number.isFinite(detail.maxSlots)) {
+    const normalizedSlots = Math.max(1, Math.min(12, Math.floor(detail.maxSlots)));
+    if (normalizedSlots !== itemSlotCount) {
+      itemSlotCount = normalizedSlots;
+      rebuildHudItemSlots(itemSlotCount);
+    }
+  }
+  updateHudInventory(currentInventory);
+});
+
 function initHud() {
   if (hudElements.container) return;
 
@@ -279,6 +318,16 @@ function initHud() {
     hudElements.abilitySlots.set(slot, abilitySlot);
   });
 
+  const goldWrapper = document.createElement('div');
+  goldWrapper.className = 'hud-gold';
+  const goldIcon = document.createElement('span');
+  goldIcon.className = 'hud-gold-icon';
+  const goldValue = document.createElement('span');
+  goldValue.className = 'hud-gold-value';
+  goldValue.textContent = '0';
+  goldWrapper.appendChild(goldIcon);
+  goldWrapper.appendChild(goldValue);
+
   const summonerWrapper = document.createElement('div');
   summonerWrapper.className = 'hud-summoners';
 
@@ -289,9 +338,14 @@ function initHud() {
     hudElements.summonerSlots.set(slot, summonerSlot);
   });
 
+  const itemsWrapper = document.createElement('div');
+  itemsWrapper.className = 'hud-items';
+
   row.appendChild(classWrapper);
   row.appendChild(abilityWrapper);
+  row.appendChild(goldWrapper);
   row.appendChild(summonerWrapper);
+  row.appendChild(itemsWrapper);
 
   container.appendChild(healthBar);
   container.appendChild(row);
@@ -304,11 +358,18 @@ function initHud() {
   hudElements.levelValue = levelValue;
   hudElements.xpFill = xpFill;
   hudElements.xpText = xpText;
+  hudElements.goldValue = goldValue;
+  hudElements.itemsWrapper = itemsWrapper;
+  hudElements.itemSlots = [];
+
+  rebuildHudItemSlots(itemSlotCount);
 
   updateHudForClass(getSelectedClassId());
   updateSpellOverlay();
   updateHudHealth(0, 0);
   updateHudLevel(1, 0, 0);
+  updateHudGold(0);
+  updateHudInventory([]);
 }
 
 function createHudSlot(keyLabel) {
@@ -331,6 +392,102 @@ function createHudSlot(keyLabel) {
   container.appendChild(cooldown);
 
   return { container, icon, cooldown };
+}
+
+function createHudItemSlot(index) {
+  const container = document.createElement('div');
+  container.className = 'hud-item-slot empty';
+
+  const icon = document.createElement('div');
+  icon.className = 'hud-item-icon';
+  icon.textContent = '';
+
+  const badge = document.createElement('span');
+  badge.className = 'hud-item-slot-index';
+  badge.textContent = `${index + 1}`;
+
+  container.appendChild(icon);
+  container.appendChild(badge);
+
+  return { container, icon, badge };
+}
+
+function rebuildHudItemSlots(count = ITEM_SLOT_COUNT) {
+  if (!hudElements.itemsWrapper) return;
+  const safeCount = Math.max(1, Math.min(12, count || ITEM_SLOT_COUNT));
+  hudElements.itemsWrapper.innerHTML = '';
+  hudElements.itemSlots = [];
+  for (let i = 0; i < safeCount; i += 1) {
+    const slot = createHudItemSlot(i);
+    hudElements.itemsWrapper.appendChild(slot.container);
+    hudElements.itemSlots.push(slot);
+  }
+  updateHudInventory(currentInventory);
+}
+
+function updateHudInventory(inventory = []) {
+  if (!hudElements.itemSlots || !hudElements.itemSlots.length) {
+    currentInventory = Array.isArray(inventory) ? [...inventory] : [];
+    return;
+  }
+  const normalized = Array.isArray(inventory)
+    ? inventory.slice(0, hudElements.itemSlots.length)
+    : [];
+  currentInventory = [...normalized];
+  hudElements.itemSlots.forEach((slot, index) => {
+    const itemId = normalized[index] || null;
+    const definition = itemId ? itemCatalog.get(itemId) : null;
+    if (definition) {
+      slot.container.classList.remove('empty');
+      slot.icon.textContent = getItemBadge(definition);
+      slot.container.title = formatItemTooltip(definition);
+    } else {
+      slot.container.classList.add('empty');
+      slot.icon.textContent = '';
+      slot.container.title = 'Emplacement vide';
+    }
+  });
+}
+
+function getItemBadge(definition) {
+  if (!definition) return '?';
+  const name = (definition.name || definition.id || '').trim();
+  if (!name.length) return '?';
+  const letters = name.replace(/[^A-Za-z0-9]/g, '');
+  if (!letters.length) {
+    return name.slice(0, 1).toUpperCase();
+  }
+  return letters.slice(0, 2).toUpperCase();
+}
+
+function formatItemTooltip(definition) {
+  const name = definition?.name || definition?.id || 'Objet';
+  const stats = [];
+  const statsDef = definition?.stats || {};
+  if (typeof statsDef.attackDamage === 'number') {
+    stats.push(`+${statsDef.attackDamage} degats`);
+  }
+  if (typeof statsDef.maxHp === 'number') {
+    stats.push(`+${statsDef.maxHp} PV`);
+  }
+  if (typeof statsDef.moveSpeed === 'number') {
+    stats.push(`+${statsDef.moveSpeed} vitesse`);
+  }
+  if (typeof statsDef.attackSpeedPct === 'number') {
+    stats.push(`+${Math.round(statsDef.attackSpeedPct * 100)}% vitesse attaque`);
+  }
+  const parts = [name];
+  if (stats.length) {
+    parts.push(`(${stats.join(', ')})`);
+  }
+  if (typeof definition?.cost === 'number') {
+    parts.push(`${definition.cost} or`);
+  }
+  let tooltip = parts.join(' ');
+  if (definition?.description) {
+    tooltip += ` - ${definition.description}`;
+  }
+  return tooltip;
 }
 
 function updateHudForClass(classId) {
@@ -366,6 +523,12 @@ function updateHudLevel(level = 1, xp = 0, xpToNext = 0) {
   const percent = target > 0 ? (safeXp / target) * 100 : 100;
   hudElements.xpFill.style.width = `${percent}%`;
   hudElements.xpText.textContent = target > 0 ? `${Math.round(percent)}%` : 'MAX';
+}
+
+function updateHudGold(gold = 0) {
+  if (!hudElements.goldValue) return;
+  const safeGold = Math.max(0, Math.round(gold || 0));
+  hudElements.goldValue.textContent = `${safeGold}`;
 }
 
 function triggerLevelUpFx(level, levelsGained = 1) {

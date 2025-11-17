@@ -3,6 +3,7 @@ import { character, initCharacter, updateCharacter, checkCharacterPosition, setG
 import { initCameraControl, updateCamera } from './ui/cameraController.js';
 import { initInput, updateInput } from './core/input.js';
 import { initOverlay } from './ui/overlay.js';
+import { initShopUI } from './ui/shop.js';
 import { initPerformanceStats } from './ui/performanceStats.js';
 import { updateMarker } from './ui/marker.js';
 import { initSpells, updateSpells } from './player/spells.js';
@@ -21,6 +22,7 @@ initMinions(scene);
 initCharacter(scene);
 initInput();
 initOverlay();
+initShopUI();
 initCameraControl(renderer.domElement);
 initSpells();
 initHealthBars(camera, renderer.domElement);

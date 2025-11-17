@@ -33,6 +33,9 @@ const projectileMaterialCache = new Map();
 
 const activeProjectiles = new Map();
 const MINION_BAR_PREFIX = 'minion-';
+const rewardPopups = [];
+const GOLD_POPUP_LIFETIME = 1.1;
+const GOLD_POPUP_RISE_SPEED = 1.45;
 
 export function getMinionMeshById(id) {
   const entry = minionMeshes.get(id);
@@ -395,6 +398,68 @@ export function handleMinionProjectile(projectile = {}) {
   });
 }
 
+function createGoldTexture(amount) {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const value = Math.max(0, Math.round(amount));
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return null;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, '#fef3c7');
+  gradient.addColorStop(1, '#f59e0b');
+  ctx.font = 'bold 32px Rajdhani, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const text = `+${value}`;
+  ctx.fillStyle = 'rgba(8, 8, 8, 0.35)';
+  ctx.fillText(text, canvas.width / 2 + 2, canvas.height / 2 + 2);
+  ctx.fillStyle = gradient;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  return new THREE.CanvasTexture(canvas);
+}
+
+export function showMinionGoldSplash({ amount, position = {} } = {}) {
+  if (!sceneRef || typeof amount !== 'number' || amount <= 0) {
+    return;
+  }
+  const texture = createGoldTexture(amount);
+  if (!texture) {
+    return;
+  }
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    depthTest: false
+  });
+  const sprite = new THREE.Sprite(material);
+  const posX = Number.isFinite(position.x) ? position.x : 0;
+  const posZ = Number.isFinite(position.z) ? position.z : 0;
+  const baseY = Number.isFinite(position.y) ? position.y : (MINION_HALF_HEIGHT + 0.35);
+  sprite.position.set(posX, baseY, posZ);
+  sprite.scale.set(1.6, 0.85, 1);
+  sprite.renderOrder = 30;
+  sceneRef.add(sprite);
+  rewardPopups.push({
+    sprite,
+    material,
+    texture,
+    elapsed: 0,
+    lifetime: GOLD_POPUP_LIFETIME,
+    baseScaleX: sprite.scale.x,
+    baseScaleY: sprite.scale.y
+  });
+}
+
 export function updateMinions(delta) {
   if (!sceneRef || delta <= 0) return;
   const catchUpMultiplier = CATCH_UP_MULTIPLIER;
@@ -458,6 +523,24 @@ export function updateMinions(delta) {
     }
   });
   finished.forEach(id => activeProjectiles.delete(id));
+
+  for (let i = rewardPopups.length - 1; i >= 0; i -= 1) {
+    const popup = rewardPopups[i];
+    popup.elapsed += delta;
+    popup.sprite.position.y += delta * GOLD_POPUP_RISE_SPEED;
+    const t = Math.min(1, popup.elapsed / popup.lifetime);
+    popup.material.opacity = Math.max(0, 1 - t);
+    popup.sprite.scale.x = popup.baseScaleX * (1 + 0.1 * t);
+    popup.sprite.scale.y = popup.baseScaleY * (1 + 0.1 * t);
+    if (popup.elapsed >= popup.lifetime) {
+      if (sceneRef && popup.sprite.parent === sceneRef) {
+        sceneRef.remove(popup.sprite);
+      }
+      popup.material.map?.dispose?.();
+      popup.material.dispose();
+      rewardPopups.splice(i, 1);
+    }
+  }
 }
 
 export function clearMinions() {
@@ -474,4 +557,12 @@ export function clearMinions() {
     }
   });
   activeProjectiles.clear();
+  while (rewardPopups.length) {
+    const popup = rewardPopups.pop();
+    if (sceneRef && popup.sprite.parent === sceneRef) {
+      sceneRef.remove(popup.sprite);
+    }
+    popup.material.map?.dispose?.();
+    popup.material.dispose();
+  }
 }

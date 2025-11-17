@@ -6,7 +6,7 @@ import { character, setDeadState, setMoveSpeed } from '../player/character.js';
 import { trackHealthBar, setHealthBarValue, setHealthBarVisible, setHealthBarLevel, setHealthBarColor } from '../ui/healthBars.js';
 import { getSelectedClassId, getSelectedClassDefinition, setSelectedClassId, onClassChange } from '../player/classes.js';
 import { setMyTeam, setPlayerTeam, clearPlayerTeam, resetTeams, getMyTeam, getPlayerTeam, getTeamMeshColor, getHealthBarColorForTeam } from '../core/teams.js';
-import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions, getMinionMeshById } from '../world/minions.js';
+import { handleMinionSnapshot, handleMinionsSpawned, handleMinionsUpdated, handleMinionsRemoved, handleMinionProjectile, clearMinions as resetMinions, getMinionMeshById, showMinionGoldSplash } from '../world/minions.js';
 import {
   handleTurretAttack,
   applyTurretSnapshot,
@@ -117,7 +117,10 @@ export const socket = io(serverUrl, {
 
 let selectedClassId = getSelectedClassId();
 
-let localProgress = { level: 1, xp: 0, xpToNext: 200 };
+let localProgress = { level: 1, xp: 0, xpToNext: 200, gold: 0 };
+let localInventory = [];
+let shopCatalog = [];
+let shopMaxSlots = 6;
 
 function emitLocalHealth(hp, maxHp) {
   window.dispatchEvent(new CustomEvent('playerHealthChanged', {
@@ -127,8 +130,32 @@ function emitLocalHealth(hp, maxHp) {
 
 function emitLocalProgress(detail) {
   window.dispatchEvent(new CustomEvent('playerProgressUpdate', {
-    detail
+    detail: {
+      ...detail,
+      inventory: [...localInventory]
+    }
   }));
+}
+
+function emitLocalGold(gold) {
+  window.dispatchEvent(new CustomEvent('playerGoldChanged', {
+    detail: { gold }
+  }));
+}
+
+function updateLocalInventory(nextInventory, { force = false } = {}) {
+  const normalized = Array.isArray(nextInventory)
+    ? nextInventory.slice(0, shopMaxSlots)
+    : [];
+  const changed = force
+    || normalized.length !== localInventory.length
+    || normalized.some((value, index) => value !== localInventory[index]);
+  localInventory = normalized;
+  if (changed) {
+    window.dispatchEvent(new CustomEvent('playerInventoryChanged', {
+      detail: { id: socket.id, inventory: [...localInventory] }
+    }));
+  }
 }
 
 onClassChange(({ id }, { source }) => {
@@ -282,9 +309,12 @@ socket.on("connect", () => {
   setHealthBarValue(myId, maxHp, maxHp);
   setHealthBarVisible(myId, true);
   emitLocalHealth(maxHp, maxHp);
-  localProgress = { level: 1, xp: 0, xpToNext: 200 };
+  localProgress = { level: 1, xp: 0, xpToNext: 200, gold: 0 };
+  localInventory = [];
+  updateLocalInventory([], { force: true });
   setHealthBarLevel(myId, localProgress.level ?? 1);
-  emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, leveledUp: false, levelsGained: 0 });
+  emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, gold: 0, leveledUp: false, levelsGained: 0 });
+  emitLocalGold(localProgress.gold);
   setMoveSpeed(classDef?.stats?.moveSpeed ?? 4.5);
   socket.emit('selectClass', { classId: selectedClassId });
   socket.emit('requestMinionSpawningStatus');
@@ -301,11 +331,32 @@ socket.on("playersList", (serverPlayers = []) => {
     setHealthBarColor(socket.id, getHealthBarColorForTeam(team));
   }
 
+  if (typeof selfEntry?.gold === 'number') {
+    localProgress.gold = selfEntry.gold;
+    emitLocalGold(localProgress.gold);
+  }
+
+  const initialInventory = Array.isArray(selfEntry?.inventory)
+    ? selfEntry.inventory.slice(0, shopMaxSlots)
+    : [];
+  updateLocalInventory(initialInventory, { force: true });
+
+  if (selfEntry && Number.isFinite(selfEntry.x) && Number.isFinite(selfEntry.z)) {
+    character.position.set(selfEntry.x, character.position.y, selfEntry.z);
+    character.visible = true;
+    setDeadState(false);
+  }
+
   players = serverPlayers
     .filter(p => p.id !== socket.id)
     .map(p => {
       const normalizedTeam = setPlayerTeam(p.id, p.team);
-      return { ...p, team: normalizedTeam };
+      return {
+        ...p,
+        team: normalizedTeam,
+        gold: typeof p.gold === 'number' ? p.gold : 0,
+        inventory: Array.isArray(p.inventory) ? [...p.inventory] : []
+      };
     });
 
   players.forEach(p => {
@@ -339,7 +390,12 @@ socket.on("playerJoined", (newPlayer) => {
         mesh.userData.moveSpeed = newPlayer.moveSpeed;
       }
     }
-    players.push({ ...newPlayer, team: normalizedTeam });
+    players.push({
+      ...newPlayer,
+      team: normalizedTeam,
+      gold: typeof newPlayer.gold === 'number' ? newPlayer.gold : 0,
+      inventory: Array.isArray(newPlayer.inventory) ? [...newPlayer.inventory] : []
+    });
     console.log("Nouveau joueur :", newPlayer);
   }
 });
@@ -382,8 +438,8 @@ socket.on('minionsUpdated', ({ minions } = {}) => {
   handleMinionsUpdated(Array.isArray(minions) ? minions : []);
 });
 
-socket.on('minionsRemoved', ({ ids } = {}) => {
-  handleMinionsRemoved(Array.isArray(ids) ? ids : []);
+socket.on('minionsRemoved', (payload = {}) => {
+  handleMinionsRemoved(payload);
 });
 
 socket.on('minionProjectile', (payload = {}) => {
@@ -443,6 +499,7 @@ socket.on('playersSnapshot', (snapshot) => {
       if (typeof p.level === 'number') target.level = p.level;
       if (typeof p.xp === 'number') target.xp = p.xp;
       if (typeof p.xpToNext === 'number') target.xpToNext = p.xpToNext;
+      if (typeof p.gold === 'number') target.gold = p.gold;
       if (typeof p.moveSpeed === 'number') {
         target.moveSpeed = p.moveSpeed;
         const mesh = remotePlayers[p.id];
@@ -661,16 +718,24 @@ window.addEventListener('beforeunload', () => {
 });
 
 socket.on('playerProgress', (payload = {}) => {
-  const { id, level, xp, xpToNext, hp, maxHp, moveSpeed, leveledUp, levelsGained } = payload;
+  const { id, level, xp, xpToNext, hp, maxHp, moveSpeed, leveledUp, levelsGained, gold, inventory } = payload;
   if (!id) return;
   if (id === socket.id) {
     if (typeof level === 'number') localProgress.level = level;
     if (typeof xp === 'number') localProgress.xp = xp;
     if (typeof xpToNext === 'number') localProgress.xpToNext = xpToNext;
+    if (typeof gold === 'number') {
+      localProgress.gold = gold;
+      emitLocalGold(localProgress.gold);
+    }
+    if (Array.isArray(inventory)) {
+      updateLocalInventory(inventory);
+    }
     emitLocalProgress({
       level: localProgress.level,
       xp: localProgress.xp,
       xpToNext: localProgress.xpToNext,
+      gold: localProgress.gold,
       leveledUp: Boolean(leveledUp),
       levelsGained: typeof levelsGained === 'number' ? levelsGained : (leveledUp ? 1 : 0)
     });
@@ -691,6 +756,10 @@ socket.on('playerProgress', (payload = {}) => {
       if (typeof xpToNext === 'number') target.xpToNext = xpToNext;
       if (typeof maxHp === 'number') target.maxHp = maxHp;
       if (typeof hp === 'number') target.hp = hp;
+      if (typeof gold === 'number') target.gold = gold;
+      if (Array.isArray(inventory)) {
+        target.inventory = [...inventory];
+      }
       if (typeof moveSpeed === 'number') {
         target.moveSpeed = moveSpeed;
         const mesh = remotePlayers[id];
@@ -706,6 +775,35 @@ socket.on('playerProgress', (payload = {}) => {
       setHealthBarVisible(id, hp > 0);
     }
   }
+});
+
+socket.on('shop:data', ({ items, maxSlots } = {}) => {
+  if (Number.isFinite(maxSlots)) {
+    const normalizedSlots = Math.max(1, Math.min(12, Math.floor(maxSlots)));
+    if (normalizedSlots !== shopMaxSlots) {
+      shopMaxSlots = normalizedSlots;
+      updateLocalInventory(localInventory, { force: true });
+    }
+  }
+  if (Array.isArray(items)) {
+    shopCatalog = items.map(item => ({ ...item }));
+  }
+  window.dispatchEvent(new CustomEvent('shop:data', {
+    detail: {
+      items: shopCatalog.map(item => ({ ...item })),
+      maxSlots: shopMaxSlots
+    }
+  }));
+});
+
+socket.on('shop:purchaseResult', (payload = {}) => {
+  window.dispatchEvent(new CustomEvent('shop:purchaseResult', {
+    detail: { ...payload }
+  }));
+});
+
+socket.on('goldReward', (payload = {}) => {
+  showMinionGoldSplash(payload);
 });
 
 socket.on('spellCast', ({ spell, from, pos, dir, classId, origin }) => {
@@ -752,8 +850,11 @@ socket.on('disconnect', (reason) => {
   players = [];
   myId = null;
   emitLocalHealth(0, 0);
-  localProgress = { level: 1, xp: 0, xpToNext: 200 };
-  emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, leveledUp: false, levelsGained: 0 });
+  localProgress = { level: 1, xp: 0, xpToNext: 200, gold: 0 };
+  localInventory = [];
+  updateLocalInventory([], { force: true });
+  emitLocalProgress({ level: 1, xp: 0, xpToNext: 200, gold: 0, leveledUp: false, levelsGained: 0 });
+  emitLocalGold(0);
   resetTeams();
   character.userData.team = null;
   resetMinions();
@@ -800,3 +901,19 @@ socket.on('playerClassChanged', ({ id, classId, hp, maxHp }) => {
     setHealthBarLevel(id, target?.level ?? 1);
   }
 });
+
+export function purchaseItem(itemId) {
+  if (!itemId) return;
+  socket.emit('shop:purchaseItem', { itemId });
+}
+
+export function getLocalInventory() {
+  return [...localInventory];
+}
+
+export function getShopCatalog() {
+  return {
+    items: shopCatalog.map(item => ({ ...item })),
+    maxSlots: shopMaxSlots
+  };
+}
